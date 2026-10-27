@@ -1,6 +1,6 @@
 # MacCare 2.0 — Native macOS System Health, Cleanup, Uninstaller & Malware Suite
 
-**MacCare** is a lightweight (~2.7 MB), 100% native SwiftUI macOS utility designed as a transparent, zero-subscription alternative to commercial "Mac cleaner" subscriptions.
+**MacCare** is a lightweight (~2.7 MB), 100% native SwiftUI macOS utility.
 
 It performs **read-only diagnostics first**, never runs persistent background bloatware, and moves cleaned items safely to your **macOS Trash** so you always have a rollback path before emptying Trash.
 
