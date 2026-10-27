@@ -1,0 +1,8 @@
+# Build artifacts
+build/
+.build/
+
+# macOS Finder metadata
+.DS_Store
+*.swp
+*~
