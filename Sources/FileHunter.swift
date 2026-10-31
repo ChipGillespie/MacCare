@@ -44,7 +44,7 @@ final class FileHunter: ObservableObject {
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 ) else { continue }
 
-                for case let fileURL as URL in enumerator {
+                while let fileURL = enumerator.nextObject() as? URL {
                     let path = fileURL.path
                     if path.contains("/node_modules/") || path.contains("/.git/") || path.contains("/build/") {
                         enumerator.skipDescendants()

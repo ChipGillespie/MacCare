@@ -4,10 +4,12 @@ import AppKit
 enum NavigationTab: String, CaseIterable, Identifiable {
     case overview = "Overview Dashboard"
     case cleanup = "Cleanup & System Junk"
+    case spaceLens = "Space Lens"
     case largeAndDupes = "Large & Duplicate Files"
     case uninstaller = "App Uninstaller"
     case updater = "App Updater"
     case malware = "Malware Scanner"
+    case networkPrivacy = "Network & Privacy"
     case security = "Security & Login Items"
     case schedule = "Weekly Schedule"
 
@@ -17,10 +19,12 @@ enum NavigationTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return "gauge.with.dots.needle.bottom.50percent"
         case .cleanup: return "sparkles.rectangle.stack"
+        case .spaceLens: return "chart.pie.fill"
         case .largeAndDupes: return "doc.on.doc.fill"
         case .uninstaller: return "trash.square.fill"
         case .updater: return "arrow.down.app.fill"
         case .malware: return "ant.circle.fill"
+        case .networkPrivacy: return "network.badge.shield.half.filled"
         case .security: return "checkmark.shield.fill"
         case .schedule: return "calendar.badge.clock"
         }
@@ -33,17 +37,23 @@ struct ContentView: View {
     @StateObject private var fileHunter = FileHunter()
     @StateObject private var appUpdater = AppUpdater()
     @StateObject private var malwareScanner = MalwareScanner()
+    @StateObject private var spaceLens = SpaceLensScanner()
+    @StateObject private var networkPrivacy = NetworkPrivacyMonitor()
 
     @State private var selectedTab: NavigationTab = .overview
     @State private var itemPendingConfirmation: CleanupRecommendation?
     @State private var startupItemPendingRemoval: StartupItem?
+    @State private var spaceLensNodePendingTrash: SpaceLensNode?
     @State private var showBatchConfirmation: Bool = false
     @State private var showUninstallConfirmation: Bool = false
     @State private var appSearchText: String = ""
     @State private var fileHunterMode: Int = 0 // 0 = Large Files, 1 = Duplicates
+    @State private var networkPrivacyMode: Int = 0 // 0 = Network & Ports, 1 = Privacy & App Permissions
+    @State private var networkSearchText: String = ""
+    @State private var selectedPrivacyFilter: PrivacyCapability? = nil
 
     var activeBanner: String? {
-        scanner.statusBannerMessage ?? uninstaller.statusMessage ?? fileHunter.statusMessage ?? appUpdater.statusMessage ?? malwareScanner.statusMessage
+        scanner.statusBannerMessage ?? uninstaller.statusMessage ?? fileHunter.statusMessage ?? appUpdater.statusMessage ?? malwareScanner.statusMessage ?? spaceLens.statusMessage ?? networkPrivacy.statusMessage
     }
 
     var body: some View {
@@ -115,6 +125,8 @@ struct ContentView: View {
                             fileHunter.statusMessage = nil
                             appUpdater.statusMessage = nil
                             malwareScanner.statusMessage = nil
+                            spaceLens.statusMessage = nil
+                            networkPrivacy.statusMessage = nil
                         }
                         .buttonStyle(.plain)
                         .font(.caption)
@@ -143,6 +155,8 @@ struct ContentView: View {
                                 } else {
                                     loadingPlaceholder()
                                 }
+                            case .spaceLens:
+                                spaceLensSection()
                             case .largeAndDupes:
                                 largeAndDuplicatesSection()
                             case .uninstaller:
@@ -151,6 +165,8 @@ struct ContentView: View {
                                 appUpdaterSection()
                             case .malware:
                                 malwareSection()
+                            case .networkPrivacy:
+                                networkPrivacySection()
                             case .security:
                                 if let report = scanner.report {
                                     securitySection(report: report)
@@ -181,7 +197,26 @@ struct ContentView: View {
                 Task { await fileHunter.runScan() }
             } else if newTab == .updater && appUpdater.outdatedItems.isEmpty && !appUpdater.isChecking {
                 Task { await appUpdater.checkForUpdates() }
+            } else if newTab == .spaceLens && spaceLens.nodes.isEmpty && !spaceLens.isScanning {
+                Task { await spaceLens.scanDirectory(at: spaceLens.currentRootPath, pushHistory: false) }
+            } else if newTab == .networkPrivacy && networkPrivacy.listeningPorts.isEmpty && networkPrivacy.establishedConnections.isEmpty && !networkPrivacy.isScanning {
+                Task { await networkPrivacy.runAudit() }
             }
+        }
+        .confirmationDialog(
+            "Move Item to Trash?",
+            isPresented: Binding(
+                get: { spaceLensNodePendingTrash != nil },
+                set: { if !$0 { spaceLensNodePendingTrash = nil } }
+            ),
+            presenting: spaceLensNodePendingTrash
+        ) { node in
+            Button("Move '\(node.name)' (\(node.formattedSize)) to Trash", role: .destructive) {
+                Task { await spaceLens.moveNodeToTrash(node) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { node in
+            Text("This moves '\(node.name)' (\(node.formattedSize)) to your macOS Trash so you can restore it anytime.\n\nPath: \(node.path)")
         }
         .confirmationDialog(
             "Confirm Cleanup Action",
@@ -356,9 +391,9 @@ struct ContentView: View {
                         HStack(spacing: 14) {
                             Button("Clean Caches →") { selectedTab = .cleanup }
                                 .buttonStyle(.link)
-                            Button("Large & Duplicate Files →") { selectedTab = .largeAndDupes }
+                            Button("Space Lens →") { selectedTab = .spaceLens }
                                 .buttonStyle(.link)
-                            Button("App Updater →") { selectedTab = .updater }
+                            Button("Large & Duplicate Files →") { selectedTab = .largeAndDupes }
                                 .buttonStyle(.link)
                         }
                     }
@@ -382,10 +417,12 @@ struct ContentView: View {
                         Text("\(loginCount) Login Items • \(agentCount) LaunchAgents/Daemons • XProtect \(report.security.xprotectVersion)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button("Manage Login Items & Daemons →") {
-                            selectedTab = .security
+                        HStack(spacing: 14) {
+                            Button("Manage Login Items →") { selectedTab = .security }
+                                .buttonStyle(.link)
+                            Button("Network & Privacy Audit →") { selectedTab = .networkPrivacy }
+                                .buttonStyle(.link)
                         }
-                        .buttonStyle(.link)
                     }
                     .padding(8)
                 }
@@ -1607,5 +1644,624 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 9. Interactive Storage Visualizer (Space Lens)
+
+    @ViewBuilder
+    private func spaceLensSection() -> some View {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Space Lens — Interactive Storage Visualizer")
+                        .font(.title2.bold())
+                    Text("Visually explore directory sizes, drill down into folders, and reclaim space safely.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    spaceLens.pickCustomFolder()
+                } label: {
+                    Label("Choose Folder...", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(spaceLens.isScanning)
+
+                Button {
+                    Task { await spaceLens.refreshCurrentDirectory() }
+                } label: {
+                    Label(spaceLens.isScanning ? "Scanning..." : "Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.teal)
+                .disabled(spaceLens.isScanning)
+            }
+
+            // Quick Root Presets & Navigation Controls
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { await spaceLens.goBack() }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(spaceLens.navigationStack.isEmpty || spaceLens.isScanning)
+                        .help("Go Back")
+
+                        Button {
+                            Task { await spaceLens.goUpOneLevel() }
+                        } label: {
+                            Label("Up", systemImage: "arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(spaceLens.currentRootPath == "/" || spaceLens.isScanning)
+
+                        Divider().frame(height: 18)
+
+                        Text("Quick Roots:")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+
+                        ForEach([
+                            ("Home (~)", home),
+                            ("~/Library", "\(home)/Library"),
+                            ("/Applications", "/Applications"),
+                            ("~/Downloads", "\(home)/Downloads"),
+                            ("~/Projects", "\(home)/Projects")
+                        ], id: \.1) { preset in
+                            Button(preset.0) {
+                                Task { await spaceLens.scanDirectory(at: preset.1, pushHistory: true) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(spaceLens.currentRootPath == preset.1 ? .teal : .primary)
+                            .disabled(spaceLens.isScanning)
+                        }
+
+                        Spacer()
+
+                        Text(ByteCountFormatter.string(fromByteCount: spaceLens.totalDirectoryBytes, countStyle: .file))
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.teal)
+                    }
+
+                    Divider()
+
+                    // Interactive Breadcrumb Trail
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(Array(spaceLens.breadcrumbs.enumerated()), id: \.offset) { idx, crumb in
+                                if idx > 0 {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Button {
+                                    Task { await spaceLens.scanDirectory(at: crumb.path, pushHistory: true) }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: idx == 0 ? "internaldrive.fill" : "folder.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.teal)
+                                        Text(crumb.name)
+                                            .font(idx == spaceLens.breadcrumbs.count - 1 ? .caption.bold() : .caption)
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(idx == spaceLens.breadcrumbs.count - 1 ? Color.teal.opacity(0.15) : Color.clear)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(spaceLens.isScanning)
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
+
+            if spaceLens.isScanning {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                    Text(spaceLens.scanProgressText)
+                        .font(.headline)
+                    Text("Calculating recursive folder allocations for \(spaceLens.currentRootPath)...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 300)
+            } else if spaceLens.nodes.isEmpty {
+                GroupBox {
+                    VStack(spacing: 10) {
+                        Image(systemName: "folder.badge.questionmark")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                        Text("Directory is Empty or Protected")
+                            .font(.headline)
+                        Text("No readable files or folders with non-zero size found in \(spaceLens.currentRootPath).")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                }
+            } else {
+                // Visual Space Lens Treemap Bar & Legend Card
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Visual Space Distribution — \(URL(fileURLWithPath: spaceLens.currentRootPath).lastPathComponent)", systemImage: "chart.bar.xaxis")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(spaceLens.nodes.count) items • Total: \(ByteCountFormatter.string(fromByteCount: spaceLens.totalDirectoryBytes, countStyle: .file))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        GeometryReader { geo in
+                            HStack(spacing: 2) {
+                                ForEach(spaceLens.nodes.prefix(10)) { node in
+                                    let width = max(4.0, geo.size.width * CGFloat(node.fractionOfParent))
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(SpaceLensScanner.palette[node.colorIndex])
+                                        .frame(width: width)
+                                        .help("\(node.name): \(node.formattedSize) (\(node.percentageString))")
+                                        .onTapGesture {
+                                            if node.isDirectory {
+                                                Task { await spaceLens.scanDirectory(at: node.path, pushHistory: true) }
+                                            }
+                                        }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .frame(height: 28)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                        // Legend for top 8 items
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                            ForEach(spaceLens.nodes.prefix(8)) { node in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(SpaceLensScanner.palette[node.colorIndex])
+                                        .frame(width: 10, height: 10)
+                                    Text(node.name)
+                                        .font(.caption.bold())
+                                        .lineLimit(1)
+                                    Spacer(minLength: 2)
+                                    Text(node.percentageString)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.03))
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
+
+                // Interactive Drill-Down Directory & File Rows
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(spaceLens.nodes) { node in
+                        GroupBox {
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(SpaceLensScanner.palette[node.colorIndex])
+                                    .frame(width: 6, height: 36)
+
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: node.path))
+                                    .resizable()
+                                    .frame(width: 30, height: 30)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 8) {
+                                        Text(node.name)
+                                            .font(.subheadline.bold())
+                                            .lineLimit(1)
+                                        if node.isDirectory {
+                                            Text("Folder (\(node.childCount) items)")
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 1)
+                                                .background(Color.teal.opacity(0.15))
+                                                .foregroundStyle(.teal)
+                                                .clipShape(Capsule())
+                                        }
+                                        Spacer()
+                                        Text(node.percentageString)
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                        Text(node.formattedSize)
+                                            .font(.headline.monospacedDigit())
+                                            .frame(minWidth: 80, alignment: .trailing)
+                                    }
+
+                                    ProgressView(value: min(max(node.fractionOfParent, 0.0), 1.0))
+                                        .tint(SpaceLensScanner.palette[node.colorIndex])
+                                }
+
+                                HStack(spacing: 8) {
+                                    if node.isDirectory {
+                                        Button {
+                                            Task { await spaceLens.scanDirectory(at: node.path, pushHistory: true) }
+                                        } label: {
+                                            Label("Drill Down", systemImage: "arrow.right.circle.fill")
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .tint(.teal)
+                                        .controlSize(.small)
+                                    }
+
+                                    Button("Reveal") {
+                                        spaceLens.revealInFinder(node.path)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button(role: .destructive) {
+                                        spaceLensNodePendingTrash = node
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .help("Move '\(node.name)' to Trash")
+                                }
+                            }
+                            .padding(6)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 10. Network & Port Monitor / Privacy Audit
+
+    @ViewBuilder
+    private func networkPrivacySection() -> some View {
+        let filteredListeners = networkPrivacy.listeningPorts.filter {
+            networkSearchText.isEmpty ||
+            $0.processName.localizedCaseInsensitiveContains(networkSearchText) ||
+            $0.localEndpoint.localizedCaseInsensitiveContains(networkSearchText) ||
+            "\($0.pid)".contains(networkSearchText)
+        }
+
+        let filteredEstablished = networkPrivacy.establishedConnections.filter {
+            networkSearchText.isEmpty ||
+            $0.processName.localizedCaseInsensitiveContains(networkSearchText) ||
+            $0.remoteEndpoint.localizedCaseInsensitiveContains(networkSearchText) ||
+            $0.localEndpoint.localizedCaseInsensitiveContains(networkSearchText) ||
+            "\($0.pid)".contains(networkSearchText)
+        }
+
+        let filteredPrivacyApps = networkPrivacy.privacyEntries.filter { entry in
+            let matchesCap = (selectedPrivacyFilter == nil) || entry.capabilities.contains(selectedPrivacyFilter!)
+            let matchesSearch = networkSearchText.isEmpty ||
+                entry.appName.localizedCaseInsensitiveContains(networkSearchText) ||
+                entry.bundleId.localizedCaseInsensitiveContains(networkSearchText)
+            return matchesCap && matchesSearch
+        }
+
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Network & Port Monitor • macOS Privacy Audit")
+                        .font(.title2.bold())
+                    Text("Inspect active outbound connections, listening server ports, Application Firewall state, and app hardware/privacy permissions.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await networkPrivacy.runAudit() }
+                } label: {
+                    Label(networkPrivacy.isScanning ? "Refreshing..." : "Refresh Audit", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.teal)
+                .disabled(networkPrivacy.isScanning)
+            }
+
+            // Summary Pillar Cards
+            HStack(spacing: 16) {
+                let lanExposedCount = networkPrivacy.listeningPorts.filter(\.isWildcardBind).count
+                securityPillarCard(
+                    title: "Listening Ports",
+                    value: "\(networkPrivacy.listeningPorts.count) Active (\(lanExposedCount) LAN-wide)",
+                    ok: lanExposedCount == 0,
+                    detail: lanExposedCount == 0 ? "All listeners bound to localhost" : "\(lanExposedCount) port(s) listening on *:port / 0.0.0.0"
+                )
+                securityPillarCard(
+                    title: "Established Connections",
+                    value: "\(networkPrivacy.establishedConnections.count) Outbound",
+                    ok: true,
+                    detail: "Live TCP/UDP sockets across running apps"
+                )
+                securityPillarCard(
+                    title: "macOS Application Firewall",
+                    value: networkPrivacy.firewallEnabled ? (networkPrivacy.stealthModeEnabled ? "Enabled (Stealth)" : "Enabled") : "Disabled",
+                    ok: networkPrivacy.firewallEnabled,
+                    detail: "\(networkPrivacy.activeSystemExtensionsCount) active System Extension(s)"
+                )
+            }
+
+            // Mode Switcher & Filter Bar
+            HStack(spacing: 16) {
+                Picker("Audit View:", selection: $networkPrivacyMode) {
+                    Text("Active Network & Listening Ports (\(networkPrivacy.listeningPorts.count + networkPrivacy.establishedConnections.count))").tag(0)
+                    Text("App Privacy & Permissions (\(networkPrivacy.privacyEntries.count) apps)").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 480)
+
+                TextField("Filter by app, process, port, IP, or bundle ID...", text: $networkSearchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 320)
+
+                Spacer()
+
+                if networkPrivacyMode == 0 {
+                    Button {
+                        networkPrivacy.openFirewallSettings()
+                    } label: {
+                        Label("Firewall Settings", systemImage: "flame.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button {
+                        networkPrivacy.openPrivacySettings(for: selectedPrivacyFilter)
+                    } label: {
+                        Label("Open macOS Privacy Settings", systemImage: "hand.raised.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if networkPrivacy.isScanning {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .scaleEffect(1.3)
+                    Text("Auditing active network sockets, listening ports, and application privacy manifests...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 280)
+            } else if networkPrivacyMode == 0 {
+                // Listening Server Ports Group
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Listening Server Ports (\(filteredListeners.count))", systemImage: "antenna.radiowaves.left.and.right")
+                                .font(.headline)
+                                .foregroundStyle(.teal)
+                            Spacer()
+                            Text("Orange badge indicates a port accepting connections from all interfaces (* / 0.0.0.0)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Divider()
+
+                        if filteredListeners.isEmpty {
+                            Text("No matching listening ports found.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(filteredListeners) { conn in
+                                networkConnectionRow(conn: conn)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+
+                // Established Outbound Connections Group
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Active Outbound / Established Connections (\(filteredEstablished.count))", systemImage: "globe")
+                                .font(.headline)
+                                .foregroundStyle(.teal)
+                            Spacer()
+                            Text("Real-time TCP connections from running processes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Divider()
+
+                        if filteredEstablished.isEmpty {
+                            Text("No active established connections matching your filter.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(filteredEstablished) { conn in
+                                networkConnectionRow(conn: conn)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+            } else {
+                // Privacy Capability Filter Pills
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Button {
+                            selectedPrivacyFilter = nil
+                        } label: {
+                            Text("All Capabilities (\(networkPrivacy.privacyEntries.count))")
+                                .font(.caption.bold())
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(selectedPrivacyFilter == nil ? .teal : .primary)
+                        .controlSize(.small)
+
+                        ForEach(PrivacyCapability.allCases) { cap in
+                            let count = networkPrivacy.privacyEntries.filter { $0.capabilities.contains(cap) }.count
+                            Button {
+                                selectedPrivacyFilter = (selectedPrivacyFilter == cap) ? nil : cap
+                            } label: {
+                                Label("\(cap.rawValue) (\(count))", systemImage: cap.icon)
+                                    .font(.caption.bold())
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(selectedPrivacyFilter == cap ? .teal : .primary)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                // App Privacy Matrix List
+                ForEach(filteredPrivacyApps) { entry in
+                    GroupBox {
+                        HStack(spacing: 12) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: entry.appPath))
+                                .resizable()
+                                .frame(width: 36, height: 36)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    Text(entry.appName)
+                                        .font(.headline)
+                                    Text(entry.bundleId)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                HStack(spacing: 6) {
+                                    ForEach(entry.capabilities) { cap in
+                                        Label(cap.rawValue, systemImage: cap.icon)
+                                            .font(.caption2.bold())
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
+                                            .background(Color.teal.opacity(0.14))
+                                            .foregroundStyle(.teal)
+                                            .clipShape(Capsule())
+                                    }
+                                    ForEach(entry.tccGrantedServices, id: \.self) { tcc in
+                                        Text("TCC Granted: \(tcc)")
+                                            .font(.caption2.bold())
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
+                                            .background(Color.green.opacity(0.15))
+                                            .foregroundStyle(.green)
+                                            .clipShape(Capsule())
+                                    }
+                                }
+                            }
+
+                            Spacer()
+
+                            Button("Reveal App") {
+                                networkPrivacy.revealInFinder(entry.appPath)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button("Privacy Settings") {
+                                networkPrivacy.openPrivacySettings(for: entry.capabilities.first)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(6)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func networkConnectionRow(conn: NetworkConnectionItem) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: conn.isListening ? (conn.isWildcardBind ? "exclamationmark.shield.fill" : "lock.shield.fill") : "arrow.up.right.circle.fill")
+                .foregroundStyle(conn.isWildcardBind ? .orange : .teal)
+                .font(.title3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(conn.processName)
+                        .font(.subheadline.bold())
+                    Text("PID \(conn.pid)")
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15))
+                        .clipShape(Capsule())
+                    Text(conn.proto)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.15))
+                        .foregroundStyle(.blue)
+                        .clipShape(Capsule())
+                    if conn.isWildcardBind {
+                        Text("LAN Exposed (* / 0.0.0.0)")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.18))
+                            .foregroundStyle(.orange)
+                            .clipShape(Capsule())
+                    } else if conn.isListening {
+                        Text("Localhost Only")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.green.opacity(0.15))
+                            .foregroundStyle(.green)
+                            .clipShape(Capsule())
+                    }
+                }
+
+                if let binPath = conn.binaryPath {
+                    Text(binPath)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                if conn.isListening {
+                    Text("Listening on \(conn.localEndpoint)")
+                        .font(.subheadline.monospacedDigit().bold())
+                } else {
+                    Text("\(conn.localEndpoint) → \(conn.remoteEndpoint)")
+                        .font(.caption.monospacedDigit().bold())
+                        .textSelection(.enabled)
+                }
+                Text("User: \(conn.user) • \(conn.state)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let binPath = conn.binaryPath {
+                Button("Reveal") {
+                    networkPrivacy.revealInFinder(binPath)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
+        Divider()
     }
 }

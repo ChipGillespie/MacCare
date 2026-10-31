@@ -6,7 +6,7 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 
 ---
 
-## Features (8 Built-In Modules)
+## Features (10 Built-In Modules)
 
 1. **Overview Dashboard**
    - Live SSD storage gauge, Battery Health (Maximum Capacity %, Cycle Count, Condition), Unified Memory breakdown, and top CPU/RAM processes.
@@ -16,21 +16,26 @@ It performs **read-only diagnostics first**, never runs persistent background bl
    - **System Junk, App Caches & Logs:** Homebrew download caches (`brew cleanup --prune=all`), Google/Chrome caches, GeoServices caches, Saved Application State, and User Logs.
    - **Mail & Messages Attachments:** Apple Mail downloaded attachments and iMessage media attachments.
    - **Trash Bins:** Inspect and empty `~/.Trash`.
-3. **Large & Duplicate Files Finder**
+3. **Space Lens — Interactive Storage Visualizer**
+   - Visual proportional space breakdown bar, color-coded legend, interactive breadcrumb navigation, quick root presets (`~`, `~/Library`, `/Applications`, `~/Downloads`, `~/Projects`, or any custom directory), and 1-click folder drill-down with safe **Reveal in Finder** and **Move to Trash** actions.
+4. **Large & Duplicate Files Finder**
    - **Large Files:** Scan `Downloads`, `Documents`, `Movies`, `Music`, `Pictures`, `Desktop`, and `Projects` with a configurable size filter (`> 10 MB`, `> 25 MB`, `> 100 MB`, `> 500 MB`).
    - **Exact Duplicates:** Fast two-pass size + `SHA-256` cryptographic fingerprint scanner that groups 100% identical files and automatically keeps the original unselected while selecting duplicate copies for safe removal.
-4. **App Uninstaller (AppCleaner Style)**
+5. **App Uninstaller (AppCleaner Style)**
    - Deep-scans any installed `.app` across `/Applications` and `~/Applications` to locate all associated `Application Support` folders, `Containers`, `Group Containers`, `Caches`, `Preferences (.plist)`, `Saved State`, `LaunchAgents`, `LaunchDaemons`, `PrivilegedHelperTools`, and `Receipts`.
    - Gracefully quits the app, unloads background daemons, and moves all selected items to Trash.
-5. **App Updater & Version Checker**
+6. **App Updater & Version Checker**
    - Checks **Homebrew GUI Casks**, **Homebrew CLI Formulae**, and **Sparkle (`SUFeedURL`)** release feeds across `/Applications`, with 1-click update buttons.
-6. **Malware Scanner (Apple XProtect YARA + Open-Source YARA + Codesign)**
+7. **Malware Scanner (Apple XProtect YARA + Open-Source YARA + Codesign)**
    - Combines the open-source **YARA** engine (`/opt/homebrew/bin/yara`) with **Apple's official `XProtect.yara` & `XPScripts.yr` signatures** (580+ official Apple rules), **Community macOS Threat Intelligence YARA rules** (targeting modern macOS infostealers like AMOS, Poseidon, fake password prompts, and droppers), and **Apple Gatekeeper / `codesign` verification**.
    - Includes a **1-Click "Update Threat Definitions"** button to sync live cloud YARA feeds and verify XProtect updates.
-7. **Security & Login Items Audit**
+8. **Network & Port Monitor • macOS Privacy Audit**
+   - **Active Network & Listening Ports:** Lists all listening server ports (`LISTEN`, flagging LAN-exposed `*` / `0.0.0.0` bindings vs. localhost-only) and live outbound `ESTABLISHED` connections with full binary path resolution (`proc_pidpath`).
+   - **Firewall & App Privacy Audit:** Audits the macOS Application Firewall (`socketfilterfw`), active System Extensions (`systemextensionsctl`), user TCC permissions (`TCC.db`), and app hardware/privacy capabilities across `/Applications` (Camera, Microphone, Screen Recording, Automation, Bluetooth, Location, and Disk Access), with 1-click deep links to macOS Privacy & Security settings.
+9. **Security & Login Items Audit**
    - Verifies **System Integrity Protection (SIP)**, **Gatekeeper**, and **XProtect / XProtectPayloads** versions.
    - Lists all **macOS Login Items** and **Background `LaunchAgents` / `LaunchDaemons`** with 1-click **"Remove Login Item"** and **"Unload & Trash"** controls so apps can't sneakily persist in the background.
-8. **Weekly Scheduled Background Scan**
+10. **Weekly Scheduled Background Scan**
    - Uses a standard macOS `LaunchAgent` (`--background-scan`) that consumes **0 MB RAM** during the week, runs at your chosen day/hour, and displays native macOS Notifications when the weekly check starts and finishes.
 
 ---
@@ -71,14 +76,16 @@ MacCare/
 ├── build_app.sh                  # Compiles the native SwiftUI .app bundle & generates AppIcon.icns
 ├── make_icon.swift               # CoreGraphics squircle icon generator
 └── Sources/
-    ├── MacCareApp.swift          # App entry point + --background-scan CLI handler
-    ├── Models.swift              # Data models for all 8 modules
-    ├── SystemScanner.swift       # Hardware, Battery, Caches, AI Clutter, Login Items & Schedule engine
-    ├── AppUninstaller.swift      # Deep associated-file scanner & clean uninstaller
-    ├── FileHunter.swift          # Large files & two-pass SHA-256 duplicate finder
-    ├── AppUpdater.swift          # Homebrew Cask/Formula & Sparkle feed updater
-    ├── MalwareScanner.swift      # YARA + Apple XProtect.yara + Community Threat Feed scanner
-    └── ContentView.swift         # Native macOS SwiftUI NavigationSplitView interface
+    ├── MacCareApp.swift              # App entry point + --background-scan CLI handler
+    ├── Models.swift                  # Data models for system metrics, cleanup, uninstaller & updates
+    ├── SystemScanner.swift           # Hardware, Battery, Caches, AI Clutter, Login Items & Schedule engine
+    ├── SpaceLensScanner.swift        # Interactive directory storage visualizer & drill-down analyzer
+    ├── AppUninstaller.swift          # Deep associated-file scanner & clean uninstaller
+    ├── FileHunter.swift              # Large files & two-pass SHA-256 duplicate finder
+    ├── AppUpdater.swift              # Homebrew Cask/Formula & Sparkle feed updater
+    ├── MalwareScanner.swift          # YARA + Apple XProtect.yara + Community Threat Feed scanner
+    ├── NetworkPrivacyMonitor.swift   # Active connections, listening ports, Firewall & TCC/Privacy audit
+    └── ContentView.swift             # Native macOS SwiftUI NavigationSplitView interface
 ```
 
 ---

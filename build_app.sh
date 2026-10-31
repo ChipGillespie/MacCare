@@ -10,16 +10,20 @@ cp "$PROJECT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 swiftc -O -target arm64-apple-macosx14.0 \
   "$PROJECT_DIR/Sources/Models.swift" \
   "$PROJECT_DIR/Sources/SystemScanner.swift" \
+  "$PROJECT_DIR/Sources/SpaceLensScanner.swift" \
   "$PROJECT_DIR/Sources/AppUninstaller.swift" \
   "$PROJECT_DIR/Sources/FileHunter.swift" \
   "$PROJECT_DIR/Sources/AppUpdater.swift" \
   "$PROJECT_DIR/Sources/MalwareScanner.swift" \
+  "$PROJECT_DIR/Sources/NetworkPrivacyMonitor.swift" \
   "$PROJECT_DIR/Sources/ContentView.swift" \
   "$PROJECT_DIR/Sources/MacCareApp.swift" \
   -o "$APP_BUNDLE/Contents/MacOS/MacCare"
 
-swift "$PROJECT_DIR/make_icon.swift" "$PROJECT_DIR"
-iconutil -c icns "$PROJECT_DIR/build/AppIcon.iconset" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+if [ ! -f "$APP_BUNDLE/Contents/Resources/AppIcon.icns" ]; then
+  swift "$PROJECT_DIR/make_icon.swift" "$PROJECT_DIR"
+  iconutil -c icns "$PROJECT_DIR/build/AppIcon.iconset" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+fi
 
 codesign --force --deep --sign - "$APP_BUNDLE"
 echo "Built $APP_BUNDLE successfully."
