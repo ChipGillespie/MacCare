@@ -51,15 +51,20 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 
 ---
 
-## Build & Install in 10 Seconds
+## Install (DMG Installer or Build from Source)
 
-Clone the repository and run `./build_app.sh`:
+### Option A — Quick Install via `.dmg` (No Compiler Required)
+1. Download **`MacCare-v2.1.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
+2. Double-click `MacCare-v2.1.dmg` and drag **`MacCare.app`** into **`Applications`**.
+3. On first launch on a new Mac, run `xattr -cr /Applications/MacCare.app` (or right-click `MacCare.app` → **Open**) so macOS Gatekeeper allows the ad-hoc signed bundle.
+
+### Option B — Build from Source in 10 Seconds
+Clone the repository and run `./build_app.sh` (or `./make_dmg.sh` to create a `.dmg` installer):
 
 ```zsh
 git clone https://github.com/ChipGillespie/MacCare.git
 cd MacCare
-chmod +x build_app.sh
-./build_app.sh
+/bin/zsh build_app.sh
 
 # Install into /Applications and launch:
 ditto build/MacCare.app /Applications/MacCare.app
@@ -73,8 +78,9 @@ open /Applications/MacCare.app
 ```text
 MacCare/
 ├── Info.plist
-├── build_app.sh                  # Compiles the native SwiftUI .app bundle & generates AppIcon.icns
-├── make_icon.swift               # CoreGraphics squircle icon generator
+├── build_app.sh                      # Compiles the native SwiftUI .app bundle & generates AppIcon.icns
+├── make_dmg.sh                       # Packages MacCare.app + /Applications shortcut into a .dmg installer
+├── make_icon.swift                   # CoreGraphics squircle icon generator
 └── Sources/
     ├── MacCareApp.swift              # App entry point + --background-scan CLI handler
     ├── Models.swift                  # Data models for system metrics, cleanup, uninstaller & updates
