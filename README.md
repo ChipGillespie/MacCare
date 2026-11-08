@@ -6,7 +6,7 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 
 ---
 
-## Features (10 Built-In Modules)
+## Features (11 Built-In Modules)
 
 1. **Overview Dashboard**
    - Live SSD storage gauge, Battery Health (Maximum Capacity %, Cycle Count, Condition), Unified Memory breakdown, and top CPU/RAM processes.
@@ -35,7 +35,9 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 9. **Security & Login Items Audit**
    - Verifies **System Integrity Protection (SIP)**, **Gatekeeper**, and **XProtect / XProtectPayloads** versions.
    - Lists all **macOS Login Items** and **Background `LaunchAgents` / `LaunchDaemons`** with 1-click **"Remove Login Item"** and **"Unload & Trash"** controls so apps can't sneakily persist in the background.
-10. **Weekly Scheduled Background Scan**
+10. **Screen & Keyboard Cleaner Mode**
+   - Blanks all connected displays to pure black for a 2-minute countdown (or 1–5 min) and locks out accidental keyboard/trackpad presses so you can safely wipe your screen and keyboard with a cloth; press **`⌘ + Esc`** at any time to exit early.
+11. **Weekly Scheduled Background Scan**
    - Uses a standard macOS `LaunchAgent` (`--background-scan`) that consumes **0 MB RAM** during the week, runs at your chosen day/hour, and displays native macOS Notifications when the weekly check starts and finishes.
 
 ---
@@ -91,6 +93,7 @@ MacCare/
     ├── AppUpdater.swift              # Homebrew Cask/Formula & Sparkle feed updater
     ├── MalwareScanner.swift          # YARA + Apple XProtect.yara + Community Threat Feed scanner
     ├── NetworkPrivacyMonitor.swift   # Active connections, listening ports, Firewall & TCC/Privacy audit
+    ├── ScreenCleanerManager.swift    # Full-screen pure-black display & keyboard cleaning mode (⌘ + Esc)
     └── ContentView.swift             # Native macOS SwiftUI NavigationSplitView interface
 ```
 

@@ -11,6 +11,7 @@ enum NavigationTab: String, CaseIterable, Identifiable {
     case malware = "Malware Scanner"
     case networkPrivacy = "Network & Privacy"
     case security = "Security & Login Items"
+    case screenCleaner = "Screen Cleaner"
     case schedule = "Weekly Schedule"
 
     var id: String { rawValue }
@@ -26,6 +27,7 @@ enum NavigationTab: String, CaseIterable, Identifiable {
         case .malware: return "ant.circle.fill"
         case .networkPrivacy: return "network.badge.shield.half.filled"
         case .security: return "checkmark.shield.fill"
+        case .screenCleaner: return "sparkles.tv"
         case .schedule: return "calendar.badge.clock"
         }
     }
@@ -39,6 +41,7 @@ struct ContentView: View {
     @StateObject private var malwareScanner = MalwareScanner()
     @StateObject private var spaceLens = SpaceLensScanner()
     @StateObject private var networkPrivacy = NetworkPrivacyMonitor()
+    @StateObject private var screenCleaner = ScreenCleanerManager()
 
     @State private var selectedTab: NavigationTab = .overview
     @State private var itemPendingConfirmation: CleanupRecommendation?
@@ -53,7 +56,7 @@ struct ContentView: View {
     @State private var selectedPrivacyFilter: PrivacyCapability? = nil
 
     var activeBanner: String? {
-        scanner.statusBannerMessage ?? uninstaller.statusMessage ?? fileHunter.statusMessage ?? appUpdater.statusMessage ?? malwareScanner.statusMessage ?? spaceLens.statusMessage ?? networkPrivacy.statusMessage
+        scanner.statusBannerMessage ?? uninstaller.statusMessage ?? fileHunter.statusMessage ?? appUpdater.statusMessage ?? malwareScanner.statusMessage ?? spaceLens.statusMessage ?? networkPrivacy.statusMessage ?? screenCleaner.statusMessage
     }
 
     var body: some View {
@@ -83,6 +86,19 @@ struct ContentView: View {
                 Spacer()
 
                 VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        screenCleaner.startCleaning(durationSeconds: 120)
+                    } label: {
+                        HStack {
+                            Image(systemName: "sparkles.tv")
+                            Text("Screen Cleaner (2m)")
+                                .fontWeight(.medium)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Blank the screen to pure black for 2 minutes so you can wipe your display & keyboard (Press ⌘ + Esc to stop anytime)")
+
                     Button {
                         Task { await scanner.runFullScan() }
                     } label: {
@@ -127,6 +143,7 @@ struct ContentView: View {
                             malwareScanner.statusMessage = nil
                             spaceLens.statusMessage = nil
                             networkPrivacy.statusMessage = nil
+                            screenCleaner.statusMessage = nil
                         }
                         .buttonStyle(.plain)
                         .font(.caption)
@@ -173,6 +190,8 @@ struct ContentView: View {
                                 } else {
                                     loadingPlaceholder()
                                 }
+                            case .screenCleaner:
+                                screenCleanerSection()
                             case .schedule:
                                 scheduleSection()
                             }
@@ -2263,5 +2282,95 @@ struct ContentView: View {
         }
         .padding(.vertical, 4)
         Divider()
+    }
+
+    // MARK: - 11. Screen & Keyboard Cleaner Mode
+
+    @ViewBuilder
+    private func screenCleanerSection() -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Screen & Keyboard Cleaner Mode")
+                .font(.title2.bold())
+            Text("Blanks all connected displays to pure black and locks out accidental keyboard/trackpad presses so you can safely wipe your screen and keyboard with a microfiber cloth.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 16) {
+                        Image(systemName: "sparkles.tv")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.teal)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Ready to Clean Your Display & Keyboard")
+                                .font(.title3.bold())
+                            Text("Turns the screen completely black for 2 minutes (or your chosen duration) so dust, fingerprints, and smudges stand out clearly. Press  ⌘ + Esc  at any time to exit early.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 24) {
+                        Picker("Auto-Stop Timer:", selection: $screenCleaner.selectedDurationSeconds) {
+                            Text("1 Minute (60s)").tag(60)
+                            Text("2 Minutes (120s — Default)").tag(120)
+                            Text("3 Minutes (180s)").tag(180)
+                            Text("5 Minutes (300s)").tag(300)
+                        }
+                        .frame(width: 300)
+
+                        Toggle("Show dim countdown & ⌘+Esc hint on black screen", isOn: $screenCleaner.showMinimalHUD)
+                            .toggleStyle(.checkbox)
+
+                        Spacer()
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 16) {
+                        Button {
+                            screenCleaner.startCleaning()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles.tv")
+                                Text("Start Screen Cleaner Now (\(screenCleaner.selectedDurationSeconds / 60) Min)")
+                                    .fontWeight(.semibold)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.teal)
+                        .controlSize(.large)
+
+                        Label("Exit Shortcut:  ⌘ + Esc  (Command + Escape)", systemImage: "command.square.fill")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+            }
+
+            // Helpful Apple Display Cleaning Tips Card
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Apple MacBook Display Cleaning Tips", systemImage: "lightbulb.fill")
+                        .font(.headline)
+                        .foregroundStyle(.teal)
+                    Divider()
+                    Text("• Use a soft, lint-free microfiber cloth (lightly dampened with water only, or 70% isopropyl alcohol for stubborn smudges).")
+                        .font(.subheadline)
+                    Text("• Never spray liquid directly onto the screen or keyboard openings.")
+                        .font(.subheadline)
+                    Text("• While Screen Cleaner Mode is active, regular keys and trackpad clicks are ignored so wiping the keyboard won't type into your apps.")
+                        .font(.subheadline)
+                }
+                .padding(10)
+            }
+        }
     }
 }
