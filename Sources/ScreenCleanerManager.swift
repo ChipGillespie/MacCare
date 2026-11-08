@@ -46,6 +46,7 @@ final class ScreenCleanerManager: ObservableObject {
                 defer: false,
                 screen: screen
             )
+            window.isReleasedWhenClosed = false
             window.level = .screenSaver
             window.backgroundColor = .black
             window.isOpaque = true
@@ -76,8 +77,8 @@ final class ScreenCleanerManager: ObservableObject {
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 // keyCode 53 is Escape on macOS; check if Command is held
                 if event.keyCode == 53 && flags.contains(.command) {
-                    Task { @MainActor in
-                        self.stopCleaning(reason: "Screen Cleaner stopped via ⌘ + Esc.")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.stopCleaning(reason: "Screen Cleaner stopped via ⌘ + Esc.")
                     }
                     return nil
                 }
@@ -123,11 +124,13 @@ final class ScreenCleanerManager: ObservableObject {
             eventMonitor = nil
         }
 
-        for window in overlayWindows {
+        let windowsToClose = overlayWindows
+        overlayWindows.removeAll()
+        for window in windowsToClose {
+            window.contentView = nil
             window.orderOut(nil)
             window.close()
         }
-        overlayWindows.removeAll()
 
         // Restore normal Dock and Menu Bar visibility
         NSApp.presentationOptions = []

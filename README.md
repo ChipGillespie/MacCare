@@ -56,8 +56,8 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 ## Install (DMG Installer or Build from Source)
 
 ### Option A — Quick Install via `.dmg` (No Compiler Required)
-1. Download **`MacCare-v2.1.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
-2. Double-click `MacCare-v2.1.dmg` and drag **`MacCare.app`** into **`Applications`**.
+1. Download **`MacCare-v2.2.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
+2. Double-click `MacCare-v2.2.dmg` and drag **`MacCare.app`** into **`Applications`**.
 3. On first launch on a new Mac, run `xattr -cr /Applications/MacCare.app` (or right-click `MacCare.app` → **Open**) so macOS Gatekeeper allows the ad-hoc signed bundle.
 
 ### Option B — Build from Source in 10 Seconds
