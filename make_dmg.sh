@@ -4,7 +4,8 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_BUNDLE="$PROJECT_DIR/build/MacCare.app"
 STAGING_DIR="$PROJECT_DIR/build/dmg_staging"
-DMG_PATH="$PROJECT_DIR/build/MacCare-v2.2.dmg"
+VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PROJECT_DIR/Info.plist" 2>/dev/null || echo "2.3")"
+DMG_PATH="$PROJECT_DIR/build/MacCare-v${VERSION}.dmg"
 
 if [ ! -d "$APP_BUNDLE" ]; then
   echo "Building MacCare.app first..."
@@ -20,7 +21,7 @@ ln -s /Applications "$STAGING_DIR/Applications"
 
 rm -f "$DMG_PATH"
 hdiutil create \
-  -volname "MacCare 2.2" \
+  -volname "MacCare ${VERSION}" \
   -srcfolder "$STAGING_DIR" \
   -ov \
   -format UDZO \

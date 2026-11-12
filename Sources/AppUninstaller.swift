@@ -155,6 +155,41 @@ final class AppUninstaller: ObservableObject {
                 rApp.forceTerminate()
             }
 
+            // 1.5. Boot out any embedded LoginItem / Helper bundles inside the .app before removing it
+            let embeddedDirs = [
+                "\(app.appPath)/Contents/Library/LoginItems",
+                "\(app.appPath)/Contents/Helpers"
+            ]
+            for eDir in embeddedDirs {
+                if let entries = try? fm.contentsOfDirectory(atPath: eDir) {
+                    for entry in entries where entry.hasSuffix(".app") {
+                        let helperPlist = "\(eDir)/\(entry)/Contents/Info.plist"
+                        if let dict = NSDictionary(contentsOfFile: helperPlist),
+                           let helperBundleId = dict["CFBundleIdentifier"] as? String,
+                           !helperBundleId.isEmpty {
+                            _ = SystemScanner.runShell("/bin/launchctl", args: ["bootout", "gui/\(uid)/\(helperBundleId)"])
+                        }
+                    }
+                }
+            }
+
+            // 1.6. Remove selected macOS Login Items (and any lingering login item pointing into app.appPath)
+            var removedLoginItems = 0
+            let loginItemsSelected = selected.filter { $0.kind == .loginItem }
+            for li in loginItemsSelected {
+                if let loginName = li.loginItemName, !loginName.isEmpty {
+                    let escapedName = loginName.replacingOccurrences(of: "\"", with: "\\\"")
+                    let script = "tell application \"System Events\" to delete (every login item whose name is \"\(escapedName)\")"
+                    _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", script])
+                    removedLoginItems += 1
+                }
+            }
+            // Also sweep any System Events login item whose path points inside app.appPath or matches app.name
+            let escapedAppPath = app.appPath.replacingOccurrences(of: "\"", with: "\\\"")
+            let escapedAppName = app.name.replacingOccurrences(of: "\"", with: "\\\"")
+            let sweepScript = "tell application \"System Events\" to delete (every login item whose path starts with \"\(escapedAppPath)\" or name is \"\(escapedAppName)\")"
+            _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", sweepScript])
+
             // 2. Unload user LaunchAgents selected for removal
             let userAgents = selected.filter { $0.kind == .launchDaemonOrAgent && !$0.requiresAdmin }
             for agent in userAgents {
@@ -162,11 +197,11 @@ final class AppUninstaller: ObservableObject {
                 _ = SystemScanner.runShell("/bin/launchctl", args: ["unload", agent.path])
             }
 
-            // 3. Separate user-writable vs admin-required files
+            // 3. Separate user-writable vs admin-required files (excluding virtual loginItem entries)
             var userItems: [AssociatedAppFile] = []
             var adminItems: [AssociatedAppFile] = []
 
-            for item in selected {
+            for item in selected where item.kind != .loginItem {
                 if item.requiresAdmin {
                     adminItems.append(item)
                 } else {
@@ -174,7 +209,7 @@ final class AppUninstaller: ObservableObject {
                 }
             }
 
-            var movedCount = 0
+            var movedCount = removedLoginItems
             // Move user-writable items to Trash first, falling back to admin if needed
             for item in userItems {
                 guard fm.fileExists(atPath: item.path) else { continue }
@@ -314,6 +349,46 @@ final class AppUninstaller: ObservableObject {
             return false
         }
 
+        // 2. Check macOS Login Items via System Events (plus embedded LoginItem helpers)
+        let loginScript = """
+        tell application "System Events"
+            set outLines to ""
+            repeat with li in login items
+                set liName to name of li
+                set liPath to ""
+                try
+                    set liPath to path of li
+                end try
+                set outLines to outLines & liName & "|||" & liPath & linefeed
+            end repeat
+            return outLines
+        end tell
+        """
+        let loginRaw = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", loginScript])
+        for line in loginRaw.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.components(separatedBy: "|||")
+            let liName = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let liPath = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            guard !liName.isEmpty else { continue }
+
+            if matchesApp(liName) || (!liPath.isEmpty && (liPath.hasPrefix(app.appPath) || matchesApp(liPath))) {
+                let displayPath = liPath.isEmpty ? "System Events Login Item: \(liName)" : "\(liPath) (Login Item: \(liName))"
+                if !seenPaths.contains(displayPath) {
+                    seenPaths.insert(displayPath)
+                    results.append(AssociatedAppFile(
+                        path: displayPath,
+                        kind: .loginItem,
+                        sizeBytes: 4096,
+                        requiresAdmin: false,
+                        isSelected: true,
+                        loginItemName: liName
+                    ))
+                }
+            }
+        }
+
         let searchLocations: [(String, AssociatedFileKind)] = [
             // Background Agents & Daemons
             ("\(homeDir)/Library/LaunchAgents", .launchDaemonOrAgent),
@@ -334,8 +409,10 @@ final class AppUninstaller: ObservableObject {
             ("\(homeDir)/Library/Application Scripts", .container),
             ("\(homeDir)/Library/Daemon Containers", .container),
 
-            // Caches
+            // Caches (including nested crash reporter caches like SentryCrash)
             ("\(homeDir)/Library/Caches", .cache),
+            ("\(homeDir)/Library/Caches/SentryCrash", .cache),
+            ("\(homeDir)/Library/Caches/com.plausiblelabs.crashreporter.data", .cache),
             ("/Library/Caches", .cache),
 
             // Preferences
@@ -346,6 +423,7 @@ final class AppUninstaller: ObservableObject {
             // Saved State, Logs, HTTPStorages, WebKit, Cookies
             ("\(homeDir)/Library/Saved Application State", .savedStateAndLogs),
             ("\(homeDir)/Library/Logs", .savedStateAndLogs),
+            ("\(homeDir)/Library/Logs/DiagnosticReports", .savedStateAndLogs),
             ("/Library/Logs", .savedStateAndLogs),
             ("\(homeDir)/Library/HTTPStorages", .savedStateAndLogs),
             ("\(homeDir)/Library/WebKit", .savedStateAndLogs),

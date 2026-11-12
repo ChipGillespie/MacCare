@@ -81,7 +81,7 @@ final class SystemScanner: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         sendNotification(
             title: "MacCare Weekly Check Started",
-            body: "Scanning your MacBook Air's storage, AI clutter, caches, battery, and security..."
+            body: "Scanning your Mac's storage, AI clutter, caches, battery, and security..."
         )
 
         let metrics = collectSystemMetrics()
@@ -137,18 +137,18 @@ final class SystemScanner: ObservableObject {
         }
     }
 
-    func performAction(for item: CleanupRecommendation) async {
-        await performActions(for: [item])
+    func performAction(for item: CleanupRecommendation, keepMostRecentSnapshot: Bool = false) async {
+        await performActions(for: [item], keepMostRecentSnapshot: keepMostRecentSnapshot)
     }
 
-    func performSelectedActions() async {
+    func performSelectedActions(keepMostRecentSnapshot: Bool = true) async {
         guard let current = report else { return }
         let selected = current.recommendations.filter { $0.isSelected && $0.actionType != .revealOnly }
         guard !selected.isEmpty else { return }
-        await performActions(for: selected)
+        await performActions(for: selected, keepMostRecentSnapshot: keepMostRecentSnapshot)
     }
 
-    private func performActions(for items: [CleanupRecommendation]) async {
+    private func performActions(for items: [CleanupRecommendation], keepMostRecentSnapshot: Bool = false) async {
         isScanning = true
         var freedBytes: Int64 = 0
         var cleanedNames: [String] = []
@@ -158,6 +158,51 @@ final class SystemScanner: ObservableObject {
             let success = await Task.detached(priority: .userInitiated) { () -> Bool in
                 let fm = FileManager.default
                 switch item.actionType {
+                case .thinLocalSnapshots:
+                    _ = Self.runShell("/usr/bin/qlmanage", args: ["-r", "cache"])
+                    let allDates = Self.localSnapshotDates().sorted()
+                    guard !allDates.isEmpty else { return false }
+
+                    if keepMostRecentSnapshot {
+                        let olderDates = Array(allDates.dropLast())
+                        guard !olderDates.isEmpty else { return false }
+                        for date in olderDates {
+                            _ = Self.runShell("/usr/bin/tmutil", args: ["deletelocalsnapshots", date])
+                        }
+                        let currentDates = Set(Self.localSnapshotDates())
+                        let remainingOlder = olderDates.filter { currentDates.contains($0) }
+                        if !remainingOlder.isEmpty {
+                            let cmds = remainingOlder.map { "/usr/bin/tmutil deletelocalsnapshots \"\($0)\"" }.joined(separator: " ; ")
+                            let escaped = cmds
+                                .replacingOccurrences(of: "\\", with: "\\\\")
+                                .replacingOccurrences(of: "\"", with: "\\\"")
+                            let osa = "do shell script \"\(escaped)\" with administrator privileges"
+                            let out = Self.runShell("/usr/bin/osascript", args: ["-e", osa])
+                            if out.lowercased().contains("user canceled") {
+                                return false
+                            }
+                        }
+                    } else {
+                        _ = Self.runShell("/usr/bin/tmutil", args: ["thinlocalsnapshots", "/", "100000000000", "4"])
+                        for date in allDates {
+                            _ = Self.runShell("/usr/bin/tmutil", args: ["deletelocalsnapshots", date])
+                        }
+                        let datesRemaining = Self.localSnapshotDates()
+                        if !datesRemaining.isEmpty {
+                            let cmd = "/usr/bin/tmutil thinlocalsnapshots / 100000000000 4 ; for d in $(/usr/bin/tmutil listlocalsnapshotdates / | /usr/bin/grep -E '^[0-9]{4}-'); do /usr/bin/tmutil deletelocalsnapshots \"$d\"; done"
+                            let escaped = cmd
+                                .replacingOccurrences(of: "\\", with: "\\\\")
+                                .replacingOccurrences(of: "\"", with: "\\\"")
+                            let osa = "do shell script \"\(escaped)\" with administrator privileges"
+                            let out = Self.runShell("/usr/bin/osascript", args: ["-e", osa])
+                            if out.lowercased().contains("user canceled") {
+                                return false
+                            }
+                        }
+                    }
+                    // Allow APFS kernel background thread time to reclaim snapshot blocks and update purgeable counters
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    return true
                 case .trashItem:
                     guard fm.fileExists(atPath: item.path) else { return false }
                     do {
@@ -312,13 +357,48 @@ final class SystemScanner: ObservableObject {
 
     // MARK: - Collectors
 
+    nonisolated static var appVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.3"
+    }
+
+    nonisolated static var appBuildNumber: String {
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "23"
+    }
+
+    nonisolated static func detectHardwareModel() -> String {
+        let hwOut = runShell("/usr/sbin/system_profiler", args: ["SPHardwareDataType"])
+        var modelName = ""
+        var chipName = ""
+        for line in hwOut.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("Model Name:") {
+                modelName = trimmed.replacingOccurrences(of: "Model Name:", with: "").trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("Chip:") {
+                chipName = trimmed.replacingOccurrences(of: "Chip:", with: "").trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("Processor Name:") && chipName.isEmpty {
+                chipName = trimmed.replacingOccurrences(of: "Processor Name:", with: "").trimmingCharacters(in: .whitespaces)
+            }
+        }
+        if chipName.isEmpty {
+            chipName = runShell("/usr/sbin/sysctl", args: ["-n", "machdep.cpu.brand_string"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if modelName.isEmpty {
+            modelName = runShell("/usr/sbin/sysctl", args: ["-n", "hw.model"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if !chipName.isEmpty && !modelName.isEmpty {
+            return "\(chipName) \(modelName)"
+        } else if !modelName.isEmpty {
+            return modelName
+        } else if !chipName.isEmpty {
+            return "\(chipName) Mac"
+        }
+        return "Mac"
+    }
+
     nonisolated static func collectSystemMetrics() -> SystemMetrics {
         var m = SystemMetrics()
 
-        let cpuBrand = runShell("/usr/sbin/sysctl", args: ["-n", "machdep.cpu.brand_string"]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cpuBrand.isEmpty {
-            m.macModel = "\(cpuBrand) MacBook Air"
-        }
+        m.macModel = detectHardwareModel()
 
         let swVers = runShell("/usr/bin/sw_vers", args: ["-productVersion"]).trimmingCharacters(in: .whitespacesAndNewlines)
         let buildVers = runShell("/usr/bin/sw_vers", args: ["-buildVersion"]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -340,6 +420,19 @@ final class SystemScanner: ObservableObject {
             m.diskTotalBytes = (attrs[.systemSize] as? NSNumber)?.int64Value ?? 0
             m.diskFreeBytes = (attrs[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
         }
+
+        let rootURL = URL(fileURLWithPath: "/")
+        if let vals = try? rootURL.resourceValues(forKeys: [
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey
+        ]) {
+            let strictFree = Int64(vals.volumeAvailableCapacity ?? Int(m.diskFreeBytes))
+            let importantFree = vals.volumeAvailableCapacityForImportantUsage ?? strictFree
+            m.diskAvailableWithPurgeableBytes = max(strictFree, importantFree)
+            m.diskPurgeableBytes = max(0, importantFree - strictFree)
+        }
+        m.localSnapshotCount = localSnapshotDates().count
 
         // Battery
         let powerOut = runShell("/usr/sbin/system_profiler", args: ["SPPowerDataType"])
@@ -405,8 +498,45 @@ final class SystemScanner: ObservableObject {
         return Double(digits) ?? 0
     }
 
+    nonisolated static func localSnapshotDates() -> [String] {
+        let out = runShell("/usr/bin/tmutil", args: ["listlocalsnapshotdates", "/"])
+        return out
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.range(of: #"^\d{4}-\d{2}-\d{2}-\d{6}$"#, options: .regularExpression) != nil }
+    }
+
     nonisolated static func collectRecommendations(homeDir: String) -> [CleanupRecommendation] {
         var list: [CleanupRecommendation] = []
+
+        // 0. Check APFS Purgeable Space & Local Time Machine Snapshots
+        let rootURL = URL(fileURLWithPath: "/")
+        var purgeableBytes: Int64 = 0
+        if let vals = try? rootURL.resourceValues(forKeys: [.volumeAvailableCapacityKey, .volumeAvailableCapacityForImportantUsageKey]) {
+            let strictFree = Int64(vals.volumeAvailableCapacity ?? 0)
+            let importantFree = vals.volumeAvailableCapacityForImportantUsage ?? strictFree
+            purgeableBytes = max(0, importantFree - strictFree)
+        }
+        let snapshotDates = localSnapshotDates()
+        if !snapshotDates.isEmpty {
+            let snapCount = snapshotDates.count
+            let effectiveSize = max(purgeableBytes, Int64(snapCount) * 100_000_000)
+            let snapLabel = snapCount == 1 ? "1 local snapshot" : "\(snapCount) local snapshots"
+            let previewDates = snapshotDates.suffix(4).joined(separator: ", ")
+            let datesSummary = snapCount > 4 ? "APFS Snapshots (\(snapCount) total, latest: \(previewDates))" : "APFS Snapshots: \(previewDates)"
+            list.append(CleanupRecommendation(
+                id: "apfs-purgeable-snapshots",
+                title: "macOS Purgeable Space & Time Machine Snapshots (\(snapLabel))",
+                subtitle: "APFS local snapshots & system-managed purgeable blocks on /",
+                explanation: "macOS retains hourly local Time Machine snapshots (\(snapLabel) currently on disk) and purgeable APFS cache space. Thinning local snapshots reclaims this space immediately without affecting external backup drives.",
+                path: datesSummary,
+                sizeBytes: effectiveSize,
+                category: .purgeableAndSnapshots,
+                safety: .safe,
+                actionType: .thinLocalSnapshots,
+                isSelected: true
+            ))
+        }
 
         let candidates: [(id: String, title: String, subtitle: String, explanation: String, path: String, category: RecommendationCategory, safety: SafetyLevel, action: CleanupRecommendation.ActionType, defaultSelected: Bool)] = [
             // 1. AI Clutter & Intelligence Caches
@@ -558,6 +688,28 @@ final class SystemScanner: ObservableObject {
                 defaultSelected: true
             ),
             (
+                id: "cloudkit-cache",
+                title: "CloudKit Local Metadata Cache",
+                subtitle: "~/Library/Caches/CloudKit",
+                explanation: "Temporary local sync cache for CloudKit. Safe to clear; macOS re-syncs active CloudKit metadata automatically.",
+                path: "\(homeDir)/Library/Caches/CloudKit",
+                category: .cachesAndLogs,
+                safety: .safe,
+                action: .trashContents,
+                defaultSelected: true
+            ),
+            (
+                id: "sentry-crash-cache",
+                title: "Sentry & Third-Party App Crash Cache",
+                subtitle: "~/Library/Caches/SentryCrash",
+                explanation: "Leftover crash report caches from third-party apps (such as BetterDisplay). Safe to remove.",
+                path: "\(homeDir)/Library/Caches/SentryCrash",
+                category: .cachesAndLogs,
+                safety: .safe,
+                action: .trashContents,
+                defaultSelected: true
+            ),
+            (
                 id: "user-logs",
                 title: "User Application & Crash Logs",
                 subtitle: "Old diagnostic and crash log files in ~/Library/Logs",
@@ -677,7 +829,9 @@ final class SystemScanner: ObservableObject {
             )
         ]
 
+        var coveredPaths = Set<String>()
         for c in candidates {
+            coveredPaths.insert(URL(fileURLWithPath: c.path).standardized.path)
             let bytes = directorySizeBytes(c.path)
             // Show Trash even if small (> 100 KB), and other items if > 250 KB
             let minBytes: Int64 = (c.category == .trashBins || c.id == "mail-downloads") ? 100_000 : 500_000
@@ -694,6 +848,31 @@ final class SystemScanner: ObservableObject {
                     actionType: c.action,
                     isSelected: c.defaultSelected
                 ))
+            }
+        }
+
+        // Dynamically scan ~/Library/Caches for any other caches >= 5 MB not already listed
+        let userCachesDir = "\(homeDir)/Library/Caches"
+        if let cacheEntries = try? FileManager.default.contentsOfDirectory(atPath: userCachesDir) {
+            for entry in cacheEntries {
+                if entry == "com.chip.maccare" || entry.hasPrefix(".") { continue }
+                let fullPath = URL(fileURLWithPath: "\(userCachesDir)/\(entry)").standardized.path
+                if coveredPaths.contains(fullPath) { continue }
+                let bytes = directorySizeBytes(fullPath)
+                if bytes >= 5_000_000 {
+                    list.append(CleanupRecommendation(
+                        id: "dyn-cache-\(entry.lowercased())",
+                        title: "App / Service Cache: \(entry)",
+                        subtitle: "~/Library/Caches/\(entry)",
+                        explanation: "Temporary application or macOS service cache in ~/Library/Caches. Safe to clean when the app is closed.",
+                        path: fullPath,
+                        sizeBytes: bytes,
+                        category: .cachesAndLogs,
+                        safety: .safe,
+                        actionType: .trashContents,
+                        isSelected: true
+                    ))
+                }
             }
         }
 

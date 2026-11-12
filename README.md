@@ -1,19 +1,24 @@
-# MacCare 2.0 — Native macOS System Health, Cleanup, Uninstaller & Malware Suite
+# MacCare 2.3 — Native macOS System Health, Cleanup, Uninstaller & Malware Suite
 
 **MacCare** is a lightweight (~2.7 MB), 100% native SwiftUI macOS utility.
 
-It performs **read-only diagnostics first**, never runs persistent background bloatware, and moves cleaned items safely to your **macOS Trash** so you always have a rollback path before emptying Trash.
+It performs **read-only diagnostics first**, dynamically adapts to the Mac hardware it runs on, never runs persistent background bloatware, and moves cleaned items safely to your **macOS Trash** so you always have a rollback path before emptying Trash.
+
+![MacCare Overview Dashboard](docs/screenshots/overview-dashboard.png)
+
+![MacCare Cleanup & System Junk](docs/screenshots/cleanup-system-junk.png)
 
 ---
 
 ## Features (11 Built-In Modules)
 
 1. **Overview Dashboard**
-   - Live SSD storage gauge, Battery Health (Maximum Capacity %, Cycle Count, Condition), Unified Memory breakdown, and top CPU/RAM processes.
+   - Dynamically detects your Mac model and Apple Silicon chip (`SPHardwareDataType`), displaying a live SSD storage gauge (**Available**, **Strict Free**, and **Purgeable Space / Local Snapshots**), Battery Health (Maximum Capacity %, Cycle Count, Condition), Unified Memory breakdown, and top CPU/RAM processes.
 2. **Cleanup & System Junk**
+   - **Purgeable Space & Time Machine Snapshots:** Identifies APFS purgeable space and local Time Machine snapshots (`tmutil`), with options to either **keep the most recent snapshot and delete older ones** or **delete all local snapshots** to reclaim gigabytes of space immediately.
    - **AI Clutter & Intelligence Caches:** Apple Intelligence Flow caches, Visual Intelligence / Neural Engine E5 bundles, Google Gemini caches, Codex, Ollama (`~/.ollama`), and HuggingFace (`~/.cache/huggingface`).
    - **Developer & Xcode Caches:** `iOS DeviceSupport`, `CoreSimulator`, and `DerivedData`.
-   - **System Junk, App Caches & Logs:** Homebrew download caches (`brew cleanup --prune=all`), Google/Chrome caches, GeoServices caches, Saved Application State, and User Logs.
+   - **System Junk, App Caches & Logs:** Dynamic `~/Library/Caches` scanner (CloudKit, app/service caches, Sentry crash caches), Homebrew download caches (`brew cleanup --prune=all`), Google/Chrome caches, GeoServices caches, Saved Application State, and User Logs.
    - **Mail & Messages Attachments:** Apple Mail downloaded attachments and iMessage media attachments.
    - **Trash Bins:** Inspect and empty `~/.Trash`.
 3. **Space Lens — Interactive Storage Visualizer**
@@ -22,8 +27,8 @@ It performs **read-only diagnostics first**, never runs persistent background bl
    - **Large Files:** Scan `Downloads`, `Documents`, `Movies`, `Music`, `Pictures`, `Desktop`, and `Projects` with a configurable size filter (`> 10 MB`, `> 25 MB`, `> 100 MB`, `> 500 MB`).
    - **Exact Duplicates:** Fast two-pass size + `SHA-256` cryptographic fingerprint scanner that groups 100% identical files and automatically keeps the original unselected while selecting duplicate copies for safe removal.
 5. **App Uninstaller (AppCleaner Style)**
-   - Deep-scans any installed `.app` across `/Applications` and `~/Applications` to locate all associated `Application Support` folders, `Containers`, `Group Containers`, `Caches`, `Preferences (.plist)`, `Saved State`, `LaunchAgents`, `LaunchDaemons`, `PrivilegedHelperTools`, and `Receipts`.
-   - Gracefully quits the app, unloads background daemons, and moves all selected items to Trash.
+   - Deep-scans any installed `.app` across `/Applications` and `~/Applications` to locate all associated **macOS Login Items (`System Events`)**, embedded `Contents/Library/LoginItems` helpers, `Application Support` folders, `Containers`, `Group Containers`, `Caches` (including nested crash caches), `Preferences (.plist)`, `Saved State`, `LaunchAgents`, `LaunchDaemons`, `PrivilegedHelperTools`, and `Receipts`.
+   - Gracefully quits the app, removes lingering Login Items, unloads background daemons/helpers, and moves all selected items to Trash.
 6. **App Updater & Version Checker**
    - Checks **Homebrew GUI Casks**, **Homebrew CLI Formulae**, and **Sparkle (`SUFeedURL`)** release feeds across `/Applications`, with 1-click update buttons.
 7. **Malware Scanner (Apple XProtect YARA + Open-Source YARA + Codesign)**
@@ -36,9 +41,10 @@ It performs **read-only diagnostics first**, never runs persistent background bl
    - Verifies **System Integrity Protection (SIP)**, **Gatekeeper**, and **XProtect / XProtectPayloads** versions.
    - Lists all **macOS Login Items** and **Background `LaunchAgents` / `LaunchDaemons`** with 1-click **"Remove Login Item"** and **"Unload & Trash"** controls so apps can't sneakily persist in the background.
 10. **Screen & Keyboard Cleaner Mode**
-   - Blanks all connected displays to pure black for a 2-minute countdown (or 1–5 min) and locks out accidental keyboard/trackpad presses so you can safely wipe your screen and keyboard with a cloth; press **`⌘ + Esc`** at any time to exit early.
-11. **Weekly Scheduled Background Scan**
-   - Uses a standard macOS `LaunchAgent` (`--background-scan`) that consumes **0 MB RAM** during the week, runs at your chosen day/hour, and displays native macOS Notifications when the weekly check starts and finishes.
+    - Blanks all connected displays to pure black for a 2-minute countdown (or 1–5 min) and locks out accidental keyboard/trackpad presses so you can safely wipe your screen and keyboard with a cloth; press **`⌘ + Esc`** at any time to exit early.
+11. **Weekly Scheduled Background Scan & Built-In Help Guide**
+    - Uses a standard macOS `LaunchAgent` (`--background-scan`) that consumes **0 MB RAM** during the week, runs at your chosen day/hour, and displays native macOS Notifications when the weekly check starts and finishes.
+    - Includes a built-in **MacCare Module Guide (`⌘?`)** and direct GitHub repository/issue links under the macOS **Help** menu.
 
 ---
 
@@ -56,8 +62,8 @@ It performs **read-only diagnostics first**, never runs persistent background bl
 ## Install (DMG Installer or Build from Source)
 
 ### Option A — Quick Install via `.dmg` (No Compiler Required)
-1. Download **`MacCare-v2.2.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
-2. Double-click `MacCare-v2.2.dmg` and drag **`MacCare.app`** into **`Applications`**.
+1. Download **`MacCare-v2.3.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
+2. Double-click `MacCare-v2.3.dmg` and drag **`MacCare.app`** into **`Applications`**.
 3. On first launch on a new Mac, run `xattr -cr /Applications/MacCare.app` (or right-click `MacCare.app` → **Open**) so macOS Gatekeeper allows the ad-hoc signed bundle.
 
 ### Option B — Build from Source in 10 Seconds
@@ -83,12 +89,13 @@ MacCare/
 ├── build_app.sh                      # Compiles the native SwiftUI .app bundle & generates AppIcon.icns
 ├── make_dmg.sh                       # Packages MacCare.app + /Applications shortcut into a .dmg installer
 ├── make_icon.swift                   # CoreGraphics squircle icon generator
+├── docs/screenshots/                 # Native SwiftUI GUI screenshots
 └── Sources/
-    ├── MacCareApp.swift              # App entry point + --background-scan CLI handler
+    ├── MacCareApp.swift              # App entry point, Help menu + --background-scan CLI handler
     ├── Models.swift                  # Data models for system metrics, cleanup, uninstaller & updates
-    ├── SystemScanner.swift           # Hardware, Battery, Caches, AI Clutter, Login Items & Schedule engine
+    ├── SystemScanner.swift           # Hardware, Battery, Purgeable/Snapshots, AI Clutter, Caches & Schedule
     ├── SpaceLensScanner.swift        # Interactive directory storage visualizer & drill-down analyzer
-    ├── AppUninstaller.swift          # Deep associated-file scanner & clean uninstaller
+    ├── AppUninstaller.swift          # Deep associated-file & Login Item scanner + clean uninstaller
     ├── FileHunter.swift              # Large files & two-pass SHA-256 duplicate finder
     ├── AppUpdater.swift              # Homebrew Cask/Formula & Sparkle feed updater
     ├── MalwareScanner.swift          # YARA + Apple XProtect.yara + Community Threat Feed scanner

@@ -7,6 +7,7 @@ enum SafetyLevel: String, Codable {
 }
 
 enum RecommendationCategory: String, Codable, CaseIterable {
+    case purgeableAndSnapshots = "Purgeable Space & Time Machine Snapshots"
     case aiClutter = "AI Clutter & Intelligence Caches"
     case cachesAndLogs = "System Junk, App Caches & Logs"
     case developer = "Developer & Xcode Caches"
@@ -29,11 +30,12 @@ struct CleanupRecommendation: Identifiable, Codable, Hashable {
     var isSelected: Bool
 
     enum ActionType: String, Codable {
-        case trashContents // Moves contents of directory to Trash
-        case trashItem     // Moves the item itself to Trash
-        case brewCleanup   // Runs brew cleanup --prune=all and trashes cache
-        case emptyTrash    // Empties ~/.Trash contents
-        case revealOnly    // Opens in Finder for manual inspection
+        case thinLocalSnapshots // Thins/deletes local APFS Time Machine snapshots & reclaims purgeable space
+        case trashContents      // Moves contents of directory to Trash
+        case trashItem          // Moves the item itself to Trash
+        case brewCleanup        // Runs brew cleanup --prune=all and trashes cache
+        case emptyTrash         // Empties ~/.Trash contents
+        case revealOnly         // Opens in Finder for manual inspection
     }
 
     var formattedSize: String {
@@ -73,14 +75,21 @@ struct SecurityAudit: Codable {
 }
 
 struct SystemMetrics: Codable {
-    var macModel: String = "Apple M2 MacBook Air"
+    var macModel: String = "Mac"
     var osVersion: String = ""
     var uptime: String = ""
     var loadAverage: String = ""
 
     var diskTotalBytes: Int64 = 0
     var diskFreeBytes: Int64 = 0
+    var diskPurgeableBytes: Int64 = 0
+    var diskAvailableWithPurgeableBytes: Int64 = 0
+    var localSnapshotCount: Int = 0
     var diskUsedBytes: Int64 { max(0, diskTotalBytes - diskFreeBytes) }
+    var diskUsedExcludingPurgeableBytes: Int64 {
+        let effectiveFree = diskAvailableWithPurgeableBytes > 0 ? diskAvailableWithPurgeableBytes : diskFreeBytes
+        return max(0, diskTotalBytes - effectiveFree)
+    }
     var diskUsedFraction: Double {
         guard diskTotalBytes > 0 else { return 0 }
         return Double(diskUsedBytes) / Double(diskTotalBytes)
@@ -142,6 +151,7 @@ struct ScheduleConfig: Codable, Equatable {
 
 enum AssociatedFileKind: String, Codable, CaseIterable {
     case appBundle = "Application Bundle"
+    case loginItem = "macOS Login Item"
     case launchDaemonOrAgent = "Background Agent / Daemon"
     case privilegedHelper = "Privileged Helper Tool"
     case applicationSupport = "Application Support"
@@ -159,6 +169,7 @@ struct AssociatedAppFile: Identifiable, Hashable {
     let sizeBytes: Int64
     let requiresAdmin: Bool
     var isSelected: Bool
+    var loginItemName: String? = nil
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)

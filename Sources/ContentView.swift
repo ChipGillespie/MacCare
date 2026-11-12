@@ -31,6 +31,33 @@ enum NavigationTab: String, CaseIterable, Identifiable {
         case .schedule: return "calendar.badge.clock"
         }
     }
+
+    var shortSummary: String {
+        switch self {
+        case .overview:
+            return "Live storage, purgeable space, battery health, memory & top CPU processes"
+        case .cleanup:
+            return "Clean Time Machine snapshots, AI clutter, Xcode symbols, caches, Mail & Trash"
+        case .spaceLens:
+            return "Interactive visual disk usage map with folder drill-down"
+        case .largeAndDupes:
+            return "Find large space-hogging files and exact SHA-256 duplicate copies"
+        case .uninstaller:
+            return "Completely remove apps along with their Login Items, helpers, caches & plists"
+        case .updater:
+            return "Check and install updates for Homebrew Casks, CLI tools & Sparkle apps"
+        case .malware:
+            return "Scan with Apple XProtect YARA, community threat rules & Gatekeeper codesign"
+        case .networkPrivacy:
+            return "Inspect active listening ports, connections, Firewall & TCC app permissions"
+        case .security:
+            return "Verify SIP, Gatekeeper, XProtect & manage Login Items and LaunchAgents"
+        case .screenCleaner:
+            return "Blank displays & lock keyboard/trackpad for 2 minutes to wipe screen (⌘ + Esc)"
+        case .schedule:
+            return "Configure a 0 MB RAM weekly LaunchAgent background scan with notifications"
+        }
+    }
 }
 
 struct ContentView: View {
@@ -54,6 +81,7 @@ struct ContentView: View {
     @State private var networkPrivacyMode: Int = 0 // 0 = Network & Ports, 1 = Privacy & App Permissions
     @State private var networkSearchText: String = ""
     @State private var selectedPrivacyFilter: PrivacyCapability? = nil
+    @State private var showHelpSheet: Bool = false
 
     var activeBanner: String? {
         scanner.statusBannerMessage ?? uninstaller.statusMessage ?? fileHunter.statusMessage ?? appUpdater.statusMessage ?? malwareScanner.statusMessage ?? spaceLens.statusMessage ?? networkPrivacy.statusMessage ?? screenCleaner.statusMessage
@@ -67,12 +95,23 @@ struct ContentView: View {
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(.teal)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("MacCare 2.0")
+                        Text("MacCare \(SystemScanner.appVersion)")
                             .font(.headline)
-                        Text("MacBook Air Suite")
+                        Text(scanner.report?.metrics.macModel ?? "macOS System Suite")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
+                    Spacer()
+                    Button {
+                        showHelpSheet = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open MacCare Module Guide & Help")
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
@@ -200,6 +239,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .task {
             if scanner.report == nil {
@@ -221,6 +261,12 @@ struct ContentView: View {
             } else if newTab == .networkPrivacy && networkPrivacy.listeningPorts.isEmpty && networkPrivacy.establishedConnections.isEmpty && !networkPrivacy.isScanning {
                 Task { await networkPrivacy.runAudit() }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macCareOpenHelp)) { _ in
+            showHelpSheet = true
+        }
+        .sheet(isPresented: $showHelpSheet) {
+            helpGuideSheet()
         }
         .confirmationDialog(
             "Move Item to Trash?",
@@ -245,13 +291,25 @@ struct ContentView: View {
             ),
             presenting: itemPendingConfirmation
         ) { item in
-            Button(
-                item.actionType == .emptyTrash
-                    ? "Permanently Empty Trash (\(item.formattedSize))"
-                    : "Move \(item.title) (\(item.formattedSize)) to Trash",
-                role: .destructive
-            ) {
-                Task { await scanner.performAction(for: item) }
+            if item.actionType == .thinLocalSnapshots {
+                let snapCount = scanner.report?.metrics.localSnapshotCount ?? 0
+                if snapCount > 1 {
+                    Button("Keep Most Recent & Delete \(snapCount - 1) Older Snapshots") {
+                        Task { await scanner.performAction(for: item, keepMostRecentSnapshot: true) }
+                    }
+                }
+                Button("Delete All \(max(snapCount, 1)) Local Snapshots (\(item.formattedSize))", role: .destructive) {
+                    Task { await scanner.performAction(for: item, keepMostRecentSnapshot: false) }
+                }
+            } else {
+                Button(
+                    item.actionType == .emptyTrash
+                        ? "Permanently Empty Trash (\(item.formattedSize))"
+                        : "Move \(item.title) (\(item.formattedSize)) to Trash",
+                    role: .destructive
+                ) {
+                    Task { await scanner.performAction(for: item) }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { item in
@@ -285,8 +343,20 @@ struct ContentView: View {
             "Clean All Selected Items?",
             isPresented: $showBatchConfirmation
         ) {
-            Button("Move Selected Items to Trash", role: .destructive) {
-                Task { await scanner.performSelectedActions() }
+            let selected = scanner.report?.recommendations.filter { $0.isSelected && $0.actionType != .revealOnly } ?? []
+            let hasSnapshots = selected.contains { $0.actionType == .thinLocalSnapshots }
+            let snapCount = scanner.report?.metrics.localSnapshotCount ?? 0
+            if hasSnapshots && snapCount > 1 {
+                Button("Clean Selected (Keep Most Recent Snapshot)") {
+                    Task { await scanner.performSelectedActions(keepMostRecentSnapshot: true) }
+                }
+                Button("Clean Selected (Delete All Snapshots)", role: .destructive) {
+                    Task { await scanner.performSelectedActions(keepMostRecentSnapshot: false) }
+                }
+            } else {
+                Button("Move Selected Items to Trash", role: .destructive) {
+                    Task { await scanner.performSelectedActions(keepMostRecentSnapshot: false) }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -321,10 +391,98 @@ struct ContentView: View {
                 .scaleEffect(1.3)
             Text(scanner.scanProgressText)
                 .font(.headline)
-            Text("Performing safe, read-only diagnostics on your MacBook Air...")
+            Text("Performing safe, read-only diagnostics on your Mac...")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: 400)
+    }
+
+    @ViewBuilder
+    private func helpGuideSheet() -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "laptopcomputer.and.iphone")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(.teal)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MacCare \(SystemScanner.appVersion) (Build \(SystemScanner.appBuildNumber)) — Module Guide")
+                        .font(.title2.bold())
+                    Text("Running on \(scanner.report?.metrics.macModel ?? SystemScanner.detectHardwareModel()) • Read-only diagnostics first, with safe Trash rollback.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") {
+                    showHelpSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.teal)
+                .keyboardShortcut(.defaultAction)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(NavigationTab.allCases) { tab in
+                        GroupBox {
+                            HStack(alignment: .center, spacing: 12) {
+                                Image(systemName: tab.icon)
+                                    .font(.title2)
+                                    .foregroundStyle(.teal)
+                                    .frame(width: 32)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(tab.rawValue)
+                                        .font(.headline)
+                                    Text(tab.shortSummary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Open") {
+                                    selectedTab = tab
+                                    showHelpSheet = false
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding(6)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            HStack(spacing: 16) {
+                Button {
+                    if let url = URL(string: "https://github.com/ChipGillespie/MacCare") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Label("GitHub Repository", systemImage: "link")
+                }
+                .buttonStyle(.link)
+
+                Button {
+                    if let url = URL(string: "https://github.com/ChipGillespie/MacCare/issues") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Label("Search or Report Issues on GitHub", systemImage: "exclamationmark.bubble")
+                }
+                .buttonStyle(.link)
+
+                Spacer()
+
+                Text("Screen Cleaner Quick Exit: ⌘ + Esc")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(width: 680, height: 580)
     }
 
     // MARK: - 1. Overview Dashboard
@@ -355,13 +513,21 @@ struct ContentView: View {
                                 .font(.headline)
                                 .foregroundStyle(.teal)
                             Spacer()
-                            Text("\(ByteCountFormatter.string(fromByteCount: report.metrics.diskFreeBytes, countStyle: .file)) Free")
+                            let availBytes = report.metrics.diskAvailableWithPurgeableBytes > 0
+                                ? report.metrics.diskAvailableWithPurgeableBytes
+                                : report.metrics.diskFreeBytes
+                            Text("\(ByteCountFormatter.string(fromByteCount: availBytes, countStyle: .file)) Available")
                                 .font(.subheadline.bold())
                         }
                         ProgressView(value: report.metrics.diskUsedFraction)
                             .tint(report.metrics.diskUsedFraction > 0.85 ? .orange : .teal)
                         HStack {
-                            Text("Used: \(ByteCountFormatter.string(fromByteCount: report.metrics.diskUsedBytes, countStyle: .file))")
+                            Text("Strict Free: \(ByteCountFormatter.string(fromByteCount: report.metrics.diskFreeBytes, countStyle: .file))")
+                            Spacer()
+                            if report.metrics.diskPurgeableBytes > 0 {
+                                Text("Purgeable: \(ByteCountFormatter.string(fromByteCount: report.metrics.diskPurgeableBytes, countStyle: .file)) (\(report.metrics.localSnapshotCount) snapshots)")
+                                    .foregroundStyle(.orange)
+                            }
                             Spacer()
                             Text("Total: \(ByteCountFormatter.string(fromByteCount: report.metrics.diskTotalBytes, countStyle: .file))")
                         }
@@ -573,33 +739,57 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(item.path)
+                    Text(item.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
 
                     HStack(spacing: 12) {
-                        Button {
-                            scanner.revealInFinder(item.path)
-                        } label: {
-                            Label("Reveal in Finder", systemImage: "folder")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        if item.actionType == .thinLocalSnapshots {
+                            let snapCount = scanner.report?.metrics.localSnapshotCount ?? 0
+                            if snapCount > 1 {
+                                Button {
+                                    Task { await scanner.performAction(for: item, keepMostRecentSnapshot: true) }
+                                } label: {
+                                    Label("Delete \(snapCount - 1) Older (Keep Newest)", systemImage: "clock.arrow.circlepath")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.teal)
+                                .controlSize(.small)
+                                .disabled(scanner.isScanning)
+                            }
 
-                        if item.actionType != .revealOnly {
                             Button {
                                 itemPendingConfirmation = item
                             } label: {
-                                Label(
-                                    actionButtonTitle(for: item.actionType),
-                                    systemImage: "trash"
-                                )
+                                Label("Delete All Snapshots...", systemImage: "trash")
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(item.safety == .safe ? .teal : .orange)
+                            .buttonStyle(.bordered)
                             .controlSize(.small)
                             .disabled(scanner.isScanning)
+                        } else {
+                            Button {
+                                scanner.revealInFinder(item.path)
+                            } label: {
+                                Label("Reveal in Finder", systemImage: "folder")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            if item.actionType != .revealOnly {
+                                Button {
+                                    itemPendingConfirmation = item
+                                } label: {
+                                    Label(
+                                        actionButtonTitle(for: item.actionType),
+                                        systemImage: "trash"
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(item.safety == .safe ? .teal : .orange)
+                                .controlSize(.small)
+                                .disabled(scanner.isScanning)
+                            }
                         }
                     }
                     .padding(.top, 4)
@@ -611,6 +801,7 @@ struct ContentView: View {
 
     private func actionButtonTitle(for action: CleanupRecommendation.ActionType) -> String {
         switch action {
+        case .thinLocalSnapshots: return "Thin Snapshots & Reclaim Space"
         case .brewCleanup: return "Run Brew Cleanup & Trash Cache"
         case .emptyTrash: return "Empty Trash Now"
         case .trashContents, .trashItem: return "Move to Trash"
@@ -1035,8 +1226,17 @@ struct ContentView: View {
 
                                                     VStack(alignment: .leading, spacing: 2) {
                                                         HStack(spacing: 6) {
-                                                            Text(URL(fileURLWithPath: file.path).lastPathComponent)
+                                                            Text(file.loginItemName ?? URL(fileURLWithPath: file.path).lastPathComponent)
                                                                 .font(.subheadline.bold())
+                                                            if file.kind == .loginItem {
+                                                                Text("System Events Login Item")
+                                                                    .font(.caption2.bold())
+                                                                    .padding(.horizontal, 6)
+                                                                    .padding(.vertical, 1)
+                                                                    .background(Color.teal.opacity(0.15))
+                                                                    .foregroundStyle(.teal)
+                                                                    .clipShape(Capsule())
+                                                            }
                                                             if file.requiresAdmin {
                                                                 Text("System / Admin")
                                                                     .font(.caption2.bold())
@@ -1055,11 +1255,13 @@ struct ContentView: View {
                                                     Spacer()
                                                     Text(file.formattedSize)
                                                         .font(.subheadline.monospacedDigit())
-                                                    Button("Reveal") {
-                                                        uninstaller.revealInFinder(file.path)
+                                                    if file.kind != .loginItem {
+                                                        Button("Reveal") {
+                                                            uninstaller.revealInFinder(file.path)
+                                                        }
+                                                        .buttonStyle(.bordered)
+                                                        .controlSize(.small)
                                                     }
-                                                    .buttonStyle(.bordered)
-                                                    .controlSize(.small)
                                                 }
                                                 .padding(.vertical, 3)
                                             }
@@ -1093,6 +1295,7 @@ struct ContentView: View {
     private func iconForKind(_ kind: AssociatedFileKind) -> String {
         switch kind {
         case .appBundle: return "app.badge.checkmark.fill"
+        case .loginItem: return "person.badge.key.fill"
         case .launchDaemonOrAgent: return "gearshape.2.fill"
         case .privilegedHelper: return "lock.shield.fill"
         case .applicationSupport: return "folder.fill.badge.gearshape"
@@ -2358,7 +2561,7 @@ struct ContentView: View {
             // Helpful Apple Display Cleaning Tips Card
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Apple MacBook Display Cleaning Tips", systemImage: "lightbulb.fill")
+                    Label("Apple Display & Keyboard Cleaning Tips", systemImage: "lightbulb.fill")
                         .font(.headline)
                         .foregroundStyle(.teal)
                     Divider()
@@ -2373,4 +2576,5 @@ struct ContentView: View {
             }
         }
     }
+
 }
