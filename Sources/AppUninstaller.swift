@@ -1,6 +1,6 @@
 import Foundation
 import AppKit
-
+import CryptoKit
 @MainActor
 final class AppUninstaller: ObservableObject {
     @Published var installedApps: [InstalledAppInfo] = []
@@ -174,14 +174,12 @@ final class AppUninstaller: ObservableObject {
             }
 
             // 1.6. Remove selected macOS Login Items (and any lingering login item pointing into app.appPath)
-            var removedLoginItems = 0
             let loginItemsSelected = selected.filter { $0.kind == .loginItem }
             for li in loginItemsSelected {
                 if let loginName = li.loginItemName, !loginName.isEmpty {
                     let escapedName = loginName.replacingOccurrences(of: "\"", with: "\\\"")
                     let script = "tell application \"System Events\" to delete (every login item whose name is \"\(escapedName)\")"
                     _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", script])
-                    removedLoginItems += 1
                 }
             }
             // Also sweep any System Events login item whose path points inside app.appPath or matches app.name
@@ -189,6 +187,21 @@ final class AppUninstaller: ObservableObject {
             let escapedAppName = app.name.replacingOccurrences(of: "\"", with: "\\\"")
             let sweepScript = "tell application \"System Events\" to delete (every login item whose path starts with \"\(escapedAppPath)\" or name is \"\(escapedAppName)\")"
             _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", sweepScript])
+
+            // Verify: a login item only counts as removed if it is really gone from System Events
+            var failedItems: [String] = []
+            var removedLoginItems = 0
+            if !loginItemsSelected.isEmpty {
+                let remaining = Self.currentLoginItemNames()
+                for li in loginItemsSelected {
+                    let name = li.loginItemName ?? li.path
+                    if let n = li.loginItemName, remaining.contains(n) {
+                        failedItems.append("Login Item '\(name)'")
+                    } else {
+                        removedLoginItems += 1
+                    }
+                }
+            }
 
             // 2. Unload user LaunchAgents selected for removal
             let userAgents = selected.filter { $0.kind == .launchDaemonOrAgent && !$0.requiresAdmin }
@@ -225,16 +238,22 @@ final class AppUninstaller: ObservableObject {
                 var shellCommands: [String] = []
                 let trashDir = "\(home)/.Trash"
                 let timestamp = Int(Date().timeIntervalSince1970)
+                // (item, trash destination) pairs so each move can be verified afterwards
+                var plannedMoves: [(item: AssociatedAppFile, dest: String)] = []
 
-                for item in adminItems {
+                for (index, item) in adminItems.enumerated() {
                     let escapedPath = item.path.replacingOccurrences(of: "'", with: "'\\''")
                     if item.kind == .launchDaemonOrAgent {
                         shellCommands.append("/bin/launchctl bootout system '\(escapedPath)' 2>/dev/null || /bin/launchctl unload '\(escapedPath)' 2>/dev/null || true")
                     }
+                    // Unique per item: baseName-timestamp-index-shortHash, so same-named files can never collide
                     let baseName = URL(fileURLWithPath: item.path).lastPathComponent
-                    let destName = "\(baseName)-\(timestamp)"
-                    let escapedDest = "\(trashDir)/\(destName)".replacingOccurrences(of: "'", with: "'\\''")
-                    shellCommands.append("/bin/mv -f '\(escapedPath)' '\(escapedDest)' && /usr/sbin/chown -R \(uid):staff '\(escapedDest)'")
+                    let shortHash = SHA256.hash(data: Data(item.path.utf8)).prefix(3).map { String(format: "%02x", $0) }.joined()
+                    let dest = "\(trashDir)/\(baseName)-\(timestamp)-\(index)-\(shortHash)"
+                    plannedMoves.append((item, dest))
+                    let escapedDest = dest.replacingOccurrences(of: "'", with: "'\\''")
+                    // mv -n never overwrites an existing destination
+                    shellCommands.append("/bin/mv -n '\(escapedPath)' '\(escapedDest)' && /usr/sbin/chown -R \(uid):staff '\(escapedDest)'")
                 }
 
                 let combinedCmd = shellCommands.joined(separator: " ; ")
@@ -242,14 +261,26 @@ final class AppUninstaller: ObservableObject {
                     .replacingOccurrences(of: "\\", with: "\\\\")
                     .replacingOccurrences(of: "\"", with: "\\\"")
                 let osa = "do shell script \"\(appleScriptCmd)\" with administrator privileges"
-                let out = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", osa])
-                if !out.lowercased().contains("user canceled") {
-                    movedCount += adminItems.count
+                _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", osa])
+
+                // Count only moves that actually happened: source gone and destination present in Trash
+                for move in plannedMoves {
+                    let sourceGone = !fm.fileExists(atPath: move.item.path)
+                    let destExists = fm.fileExists(atPath: move.dest)
+                    if sourceGone && destExists {
+                        movedCount += 1
+                    } else {
+                        failedItems.append(URL(fileURLWithPath: move.item.path).lastPathComponent)
+                    }
                 }
             }
 
             let formatted = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
-            return "Cleanly removed \(movedCount) items (\(formatted)) for \(app.name) and moved them to your Trash. (Rollback: Restore from Trash anytime before emptying.)"
+            if failedItems.isEmpty {
+                return "Cleanly removed \(movedCount) items (\(formatted)) for \(app.name) and moved them to your Trash. (Rollback: Restore from Trash anytime before emptying.)"
+            } else {
+                return "Removed \(movedCount) of \(selected.count) items for \(app.name). Could not remove: \(failedItems.joined(separator: ", ")). (Permission may have been canceled; moved items are in your Trash.)"
+            }
         }.value
 
         isUninstalling = false
@@ -265,6 +296,16 @@ final class AppUninstaller: ObservableObject {
     }
 
     // MARK: - App Discovery & Deep File Scanner
+
+    nonisolated static func currentLoginItemNames() -> Set<String> {
+        let raw = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", "tell application \"System Events\" to get the name of every login item"])
+        return Set(
+            raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+    }
 
     nonisolated static func readAppInfo(at appPath: String) -> InstalledAppInfo? {
         let plistPath = "\(appPath)/Contents/Info.plist"

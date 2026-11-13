@@ -358,11 +358,11 @@ final class SystemScanner: ObservableObject {
     // MARK: - Collectors
 
     nonisolated static var appVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.3"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "2.4"
     }
 
     nonisolated static var appBuildNumber: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "23"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "24"
     }
 
     nonisolated static func detectHardwareModel() -> String {
@@ -528,7 +528,7 @@ final class SystemScanner: ObservableObject {
                 id: "apfs-purgeable-snapshots",
                 title: "macOS Purgeable Space & Time Machine Snapshots (\(snapLabel))",
                 subtitle: "APFS local snapshots & system-managed purgeable blocks on /",
-                explanation: "macOS retains hourly local Time Machine snapshots (\(snapLabel) currently on disk) and purgeable APFS cache space. Thinning local snapshots reclaims this space immediately without affecting external backup drives.",
+                explanation: "macOS retains hourly local Time Machine snapshots (\(snapLabel) currently on disk) and purgeable APFS cache space. Thinning local snapshots frees space without affecting external backup drives. The size shown is an estimate; the actual amount reclaimed depends on how much purgeable space is snapshot data.",
                 path: datesSummary,
                 sizeBytes: effectiveSize,
                 category: .purgeableAndSnapshots,

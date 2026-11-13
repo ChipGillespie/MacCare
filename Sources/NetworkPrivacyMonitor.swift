@@ -136,38 +136,12 @@ final class NetworkPrivacyMonitor: ObservableObject {
 
         let lines = output.components(separatedBy: .newlines)
         for line in lines.dropFirst() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-            guard parts.count >= 9 else { continue }
+            guard let row = LsofParser.parseLine(line) else { continue }
+            let kind = LsofParser.classify(row)
+            guard kind != .ignored else { continue }
 
-            let rawProcName = parts[0].replacingOccurrences(of: "\\x20", with: " ")
-            let pid = Int32(parts[1]) ?? 0
-            let user = parts[2]
-            let proto = parts[7] // TCP or UDP
-
-            let nameAndState = parts[8...].joined(separator: " ")
-            var state = "ACTIVE"
-            var endpointPart = nameAndState
-
-            if let parenStart = nameAndState.range(of: " ("),
-               let parenEnd = nameAndState.range(of: ")", range: parenStart.upperBound..<nameAndState.endIndex) {
-                state = String(nameAndState[parenStart.upperBound..<parenEnd.lowerBound])
-                endpointPart = String(nameAndState[..<parenStart.lowerBound])
-            } else if proto == "UDP" {
-                state = "UDP"
-            }
-
-            let isListening = (state == "LISTEN" || (proto == "UDP" && !endpointPart.contains("->")))
-            var localEP = endpointPart
-            var remoteEP = "—"
-
-            if let arrowRange = endpointPart.range(of: "->") {
-                localEP = String(endpointPart[..<arrowRange.lowerBound])
-                remoteEP = String(endpointPart[arrowRange.upperBound...])
-            }
-
-            let dedupKey = "\(pid)|\(proto)|\(localEP)|\(remoteEP)|\(state)"
+            let pid = row.pid
+            let dedupKey = "\(pid)|\(row.proto)|\(row.localEndpoint)|\(row.remoteEndpoint)|\(row.state)"
             guard !seenKeys.contains(dedupKey) else { continue }
             seenKeys.insert(dedupKey)
 
@@ -180,27 +154,23 @@ final class NetworkPrivacyMonitor: ObservableObject {
                 binPath = resolved
             }
 
-            let isWildcard = isListening && (localEP.hasPrefix("*:") || localEP.hasPrefix("0.0.0.0:") || localEP.hasPrefix("[::]:"))
-
             let item = NetworkConnectionItem(
                 id: dedupKey,
-                processName: rawProcName,
+                processName: row.processName,
                 pid: pid,
-                user: user,
-                proto: proto,
-                localEndpoint: localEP,
-                remoteEndpoint: remoteEP,
-                state: state,
+                user: row.user,
+                proto: row.proto,
+                localEndpoint: row.localEndpoint,
+                remoteEndpoint: row.remoteEndpoint,
+                state: row.state,
                 binaryPath: binPath,
-                isListening: isListening,
-                isWildcardBind: isWildcard
+                isListening: row.isListening,
+                isWildcardBind: LsofParser.isWildcardBind(row)
             )
 
-            if isListening {
-                if state == "LISTEN" {
-                    listeners.append(item)
-                }
-            } else if state == "ESTABLISHED" || state == "SYN_SENT" || state == "CLOSE_WAIT" {
+            if kind == .listener {
+                listeners.append(item)
+            } else {
                 established.append(item)
             }
         }

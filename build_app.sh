@@ -16,6 +16,7 @@ swiftc -O -target arm64-apple-macosx14.0 \
   "$PROJECT_DIR/Sources/AppUpdater.swift" \
   "$PROJECT_DIR/Sources/MalwareScanner.swift" \
   "$PROJECT_DIR/Sources/NetworkPrivacyMonitor.swift" \
+  "$PROJECT_DIR/Sources/LsofParser.swift" \
   "$PROJECT_DIR/Sources/ScreenCleanerManager.swift" \
   "$PROJECT_DIR/Sources/ContentView.swift" \
   "$PROJECT_DIR/Sources/MacCareApp.swift" \

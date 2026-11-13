@@ -76,7 +76,9 @@ final class FileHunter: ObservableObject {
 
             let sortedLarge = allCandidateFiles.sorted { $0.sizeBytes > $1.sizeBytes }
 
-            // Second pass: SHA-256 hash only for size buckets with >= 2 files
+            // Second pass: sampled hash is only a fast candidate filter for buckets with >= 2 same-size files.
+            // A full-content SHA-256 must confirm a match before anything is pre-selected for deletion.
+            let fullHashThreshold = Int64(4 * 1024 * 1024) // files at or below this are already fully hashed
             var dupeGroups: [DuplicateFileGroup] = []
             for (size, items) in sizeBuckets where items.count >= 2 {
                 var hashBuckets: [String: [LargeFileItem]] = [:]
@@ -85,17 +87,29 @@ final class FileHunter: ObservableObject {
                         hashBuckets[digest, default: []].append(item)
                     }
                 }
-                for (hash, matched) in hashBuckets where matched.count >= 2 {
-                    var ordered = matched.sorted { $0.modifiedDate < $1.modifiedDate }
-                    // Keep index 0 unselected (original), pre-select copies (index 1+)
-                    for idx in ordered.indices {
-                        ordered[idx].isSelected = (idx > 0)
+                for (sampledHash, candidates) in hashBuckets where candidates.count >= 2 {
+                    var confirmed: [String: [LargeFileItem]] = [:]
+                    for item in candidates {
+                        let fullHash: String? = size <= fullHashThreshold
+                            ? sampledHash
+                            : Self.computeFullHash(path: item.path)
+                        // Unreadable files are excluded: never pre-select anything we could not verify
+                        if let fullHash {
+                            confirmed[fullHash, default: []].append(item)
+                        }
                     }
-                    dupeGroups.append(DuplicateFileGroup(
-                        id: hash,
-                        fileSizeBytes: size,
-                        files: ordered
-                    ))
+                    for (hash, matched) in confirmed where matched.count >= 2 {
+                        var ordered = matched.sorted { $0.modifiedDate < $1.modifiedDate }
+                        // Keep index 0 unselected (original), pre-select copies (index 1+)
+                        for idx in ordered.indices {
+                            ordered[idx].isSelected = (idx > 0)
+                        }
+                        dupeGroups.append(DuplicateFileGroup(
+                            id: hash,
+                            fileSizeBytes: size,
+                            files: ordered
+                        ))
+                    }
                 }
             }
 
@@ -136,6 +150,24 @@ final class FileHunter: ObservableObject {
         }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Streams the entire file through SHA-256. Returns nil if any read fails.
+    nonisolated private static func computeFullHash(path: String) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        let chunkSize = 4 * 1024 * 1024
+        while true {
+            do {
+                guard let data = try handle.read(upToCount: chunkSize), !data.isEmpty else { break }
+                hasher.update(data: data)
+            } catch {
+                return nil
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     func toggleLargeFile(_ path: String) {

@@ -1,4 +1,4 @@
-# MacCare 2.3 — Native macOS System Health, Cleanup, Uninstaller & Malware Suite
+# MacCare 2.4 — Native macOS System Health, Cleanup, Uninstaller & Malware Suite
 
 **MacCare** is a lightweight (~2.7 MB), 100% native SwiftUI macOS utility.
 
@@ -7,6 +7,17 @@ It performs **read-only diagnostics first**, dynamically adapts to the Mac hardw
 ![MacCare Overview Dashboard](docs/screenshots/overview-dashboard.png)
 
 ![MacCare Cleanup & System Junk](docs/screenshots/cleanup-system-junk.png)
+
+---
+
+## What's New in 2.4
+
+- **Network monitor now shows UDP.** UDP listeners and flows were silently dropped before; they now appear alongside TCP (unbound `*:*` sockets are filtered out). Parsing lives in `LsofParser.swift` with a standalone test suite.
+- **Safer duplicate finder.** A fast sampled hash only picks candidates; a **full-content SHA-256** must confirm a match before any file is pre-selected for removal.
+- **Safer admin uninstalls.** Items removed with administrator rights get a unique Trash name per item (no overwrites), and the result reports only moves and Login Item removals that were actually verified.
+- **Honest snapshot sizing.** The purgeable-space card is labeled as an estimate.
+
+See [Releases](https://github.com/ChipGillespie/MacCare/releases) for earlier versions.
 
 ---
 
@@ -62,8 +73,8 @@ It performs **read-only diagnostics first**, dynamically adapts to the Mac hardw
 ## Install (DMG Installer or Build from Source)
 
 ### Option A — Quick Install via `.dmg` (No Compiler Required)
-1. Download **`MacCare-v2.3.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
-2. Double-click `MacCare-v2.3.dmg` and drag **`MacCare.app`** into **`Applications`**.
+1. Download **`MacCare-v2.4.dmg`** from the [**Latest GitHub Release**](https://github.com/ChipGillespie/MacCare/releases/latest).
+2. Double-click `MacCare-v2.4.dmg` and drag **`MacCare.app`** into **`Applications`**.
 3. On first launch on a new Mac, run `xattr -cr /Applications/MacCare.app` (or right-click `MacCare.app` → **Open**) so macOS Gatekeeper allows the ad-hoc signed bundle.
 
 ### Option B — Build from Source in 10 Seconds
@@ -90,6 +101,9 @@ MacCare/
 ├── make_dmg.sh                       # Packages MacCare.app + /Applications shortcut into a .dmg installer
 ├── make_icon.swift                   # CoreGraphics squircle icon generator
 ├── docs/screenshots/                 # Native SwiftUI GUI screenshots
+├── Tests/
+│   ├── LsofParserTests.swift         # Standalone tests for the lsof parser (canned TCP/UDP rows)
+│   └── run_tests.sh                  # Compiles and runs the tests: ./Tests/run_tests.sh
 └── Sources/
     ├── MacCareApp.swift              # App entry point, Help menu + --background-scan CLI handler
     ├── Models.swift                  # Data models for system metrics, cleanup, uninstaller & updates
@@ -100,6 +114,7 @@ MacCare/
     ├── AppUpdater.swift              # Homebrew Cask/Formula & Sparkle feed updater
     ├── MalwareScanner.swift          # YARA + Apple XProtect.yara + Community Threat Feed scanner
     ├── NetworkPrivacyMonitor.swift   # Active connections, listening ports, Firewall & TCC/Privacy audit
+    ├── LsofParser.swift              # Testable lsof -i parser + TCP/UDP listener/established classification
     ├── ScreenCleanerManager.swift    # Full-screen pure-black display & keyboard cleaning mode (⌘ + Esc)
     └── ContentView.swift             # Native macOS SwiftUI NavigationSplitView interface
 ```
