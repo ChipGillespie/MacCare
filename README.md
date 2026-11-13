@@ -12,6 +12,7 @@ It performs **read-only diagnostics first**, dynamically adapts to the Mac hardw
 
 ## What's New in 2.4
 
+- **Touch ID for privileged tasks.** On Macs equipped with a fingerprint sensor (MacBook Air, MacBook Pro, Apple Silicon Magic Keyboard with Touch ID), MacCare prompts for biometric authentication (`LocalAuthentication`) before performing privileged operations: removing system `LaunchDaemons`, uninstalling privileged helper tools, and purging protected APFS snapshots. Includes an in-app biometric toggle in Security & Login Items and status/setup helper for system-wide terminal `sudo` Touch ID via `/etc/pam.d/sudo_local`.
 - **Network monitor now shows UDP.** UDP listeners and flows were silently dropped before; they now appear alongside TCP (unbound `*:*` sockets are filtered out). Parsing lives in `LsofParser.swift` with a standalone test suite.
 - **Safer duplicate finder.** A fast sampled hash only picks candidates; a **full-content SHA-256** must confirm a match before any file is pre-selected for removal.
 - **Safer admin uninstalls.** Items removed with administrator rights get a unique Trash name per item (no overwrites), and the result reports only moves and Login Item removals that were actually verified.
@@ -48,8 +49,10 @@ See [Releases](https://github.com/ChipGillespie/MacCare/releases) for earlier ve
 8. **Network & Port Monitor • macOS Privacy Audit**
    - **Active Network & Listening Ports:** Lists all listening server ports (`LISTEN`, flagging LAN-exposed `*` / `0.0.0.0` bindings vs. localhost-only) and live outbound `ESTABLISHED` connections with full binary path resolution (`proc_pidpath`).
    - **Firewall & App Privacy Audit:** Audits the macOS Application Firewall (`socketfilterfw`), active System Extensions (`systemextensionsctl`), user TCC permissions (`TCC.db`), and app hardware/privacy capabilities across `/Applications` (Camera, Microphone, Screen Recording, Automation, Bluetooth, Location, and Disk Access), with 1-click deep links to macOS Privacy & Security settings.
-9. **Security & Login Items Audit**
+9. **Security, Touch ID & Login Items Audit**
    - Verifies **System Integrity Protection (SIP)**, **Gatekeeper**, and **XProtect / XProtectPayloads** versions.
+   - **Touch ID for Privileged Tasks:** Detects biometric sensor hardware (`LocalAuthentication`) on Macs with fingerprint readers (MacBook Air/Pro, Magic Keyboard with Touch ID). Prompts with native Touch ID before removing system `LaunchDaemons`, uninstalling privileged helper tools, or deleting protected APFS snapshots.
+   - **System `sudo` Touch ID Integration:** Inspects `/etc/pam.d/sudo_local` and provides 1-click configuration to enable Touch ID across terminal and command-line `sudo` tools via Apple's official `pam_tid.so` PAM module.
    - Lists all **macOS Login Items** and **Background `LaunchAgents` / `LaunchDaemons`** with 1-click **"Remove Login Item"** and **"Unload & Trash"** controls so apps can't sneakily persist in the background.
 10. **Screen & Keyboard Cleaner Mode**
     - Blanks all connected displays to pure black for a 2-minute countdown (or 1–5 min) and locks out accidental keyboard/trackpad presses so you can safely wipe your screen and keyboard with a cloth; press **`⌘ + Esc`** at any time to exit early.
@@ -103,10 +106,12 @@ MacCare/
 ├── docs/screenshots/                 # Native SwiftUI GUI screenshots
 ├── Tests/
 │   ├── LsofParserTests.swift         # Standalone tests for the lsof parser (canned TCP/UDP rows)
+│   ├── TouchIDManagerTests.swift     # Standalone tests for Touch ID diagnostics & PAM config parsing
 │   └── run_tests.sh                  # Compiles and runs the tests: ./Tests/run_tests.sh
 └── Sources/
     ├── MacCareApp.swift              # App entry point, Help menu + --background-scan CLI handler
     ├── Models.swift                  # Data models for system metrics, cleanup, uninstaller & updates
+    ├── TouchIDManager.swift          # LocalAuthentication Touch ID biometrics & PAM sudo integration
     ├── SystemScanner.swift           # Hardware, Battery, Purgeable/Snapshots, AI Clutter, Caches & Schedule
     ├── SpaceLensScanner.swift        # Interactive directory storage visualizer & drill-down analyzer
     ├── AppUninstaller.swift          # Deep associated-file & Login Item scanner + clean uninstaller

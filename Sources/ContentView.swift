@@ -69,6 +69,7 @@ struct ContentView: View {
     @StateObject private var spaceLens = SpaceLensScanner()
     @StateObject private var networkPrivacy = NetworkPrivacyMonitor()
     @StateObject private var screenCleaner = ScreenCleanerManager()
+    @StateObject private var touchID = TouchIDManager.shared
 
     @State private var selectedTab: NavigationTab = .overview
     @State private var itemPendingConfirmation: CleanupRecommendation?
@@ -336,7 +337,10 @@ struct ContentView: View {
             if item.kind == .loginItem {
                 Text("This removes '\(item.name)' from macOS Login Items so it won't launch automatically when you log in. The application itself remains in /Applications.")
             } else {
-                Text("This unloads '\(item.name)' via launchctl and moves its .plist file (\(item.path)) to your Trash so you can restore it if needed.")
+                let authNote = touchID.isHardwareAvailable && touchID.isTouchIDEnabled
+                    ? " You will be prompted with Touch ID to authorize unloading and trashing this item."
+                    : ""
+                Text("This unloads '\(item.name)' via launchctl and moves its .plist file (\(item.path)) to your Trash so you can restore it if needed.\(authNote)")
             }
         }
         .confirmationDialog(
@@ -363,7 +367,11 @@ struct ContentView: View {
             let selected = scanner.report?.recommendations.filter { $0.isSelected && $0.actionType != .revealOnly } ?? []
             let totalBytes = selected.reduce(0) { $0 + $1.sizeBytes }
             let formatted = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
-            Text("This will clean \(selected.count) selected cache/support items (\(formatted)) and move them to your macOS Trash.")
+            let hasSnapshots = selected.contains { $0.actionType == .thinLocalSnapshots }
+            let authNote = hasSnapshots && touchID.isHardwareAvailable && touchID.isTouchIDEnabled
+                ? "\n\n🔒 Touch ID will be requested to authorize deleting protected APFS snapshots."
+                : ""
+            Text("This will clean \(selected.count) selected cache/support items (\(formatted)) and move them to your macOS Trash.\(authNote)")
         }
         .confirmationDialog(
             "Complete App Uninstall?",
@@ -378,7 +386,9 @@ struct ContentView: View {
         } message: {
             let appName = uninstaller.selectedApp?.name ?? "Application"
             let adminNote = uninstaller.selectedRequiresAdmin
-                ? "\n\nNote: Because \(appName) includes system-level daemons or privileged helpers in /Library, macOS will ask for your administrator password / Touch ID to unload and move them to your Trash."
+                ? (touchID.isHardwareAvailable && touchID.isTouchIDEnabled
+                    ? "\n\n🔒 Touch ID Protected: You will be prompted with Touch ID to authorize unloading background daemons and moving privileged helpers to your Trash."
+                    : "\n\nNote: Because \(appName) includes system-level daemons or privileged helpers in /Library, macOS will ask for your administrator password to unload and move them to your Trash.")
                 : ""
             Text("This will quit \(appName), unload any selected background LaunchAgents/Daemons, and move the selected application bundle, libraries, caches, and preferences to your macOS Trash.\(adminNote)")
         }
@@ -494,9 +504,16 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(report.metrics.macModel)
                         .font(.title.bold())
-                    Text("\(report.metrics.osVersion) • Uptime: \(report.metrics.uptime) • Load: \(report.metrics.loadAverage)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text("\(report.metrics.osVersion) • Uptime: \(report.metrics.uptime) • Load: \(report.metrics.loadAverage)")
+                        if touchID.isHardwareAvailable {
+                            Text("•")
+                            Label(touchID.isTouchIDEnabled ? "Touch ID Active" : "Touch ID Available", systemImage: "touchid")
+                                .foregroundStyle(.teal)
+                        }
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("Scanned \(report.timestamp.formatted(date: .abbreviated, time: .shortened))")
@@ -1162,9 +1179,14 @@ struct ContentView: View {
                             .controlSize(.small)
 
                         if uninstaller.selectedRequiresAdmin {
-                            Label("Includes System Daemon/Helper (Requires Admin/Touch ID)", systemImage: "lock.shield.fill")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
+                            Label(
+                                touchID.isHardwareAvailable && touchID.isTouchIDEnabled
+                                    ? "Includes System Daemon/Helper (Touch ID Protected)"
+                                    : "Includes System Daemon/Helper (Requires Admin Password)",
+                                systemImage: touchID.isHardwareAvailable && touchID.isTouchIDEnabled ? "touchid" : "lock.shield.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                         }
 
                         Spacer()
@@ -1458,7 +1480,7 @@ struct ContentView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 securityPillarCard(
                     title: "System Integrity (SIP)",
                     value: report.security.sipEnabled ? "Enabled" : "Disabled",
@@ -1472,11 +1494,118 @@ struct ContentView: View {
                     detail: "Verifies app notarization & developer IDs"
                 )
                 securityPillarCard(
-                    title: "Apple XProtect & Remediator",
-                    value: "\(report.security.xprotectVersion) / \(report.security.xprotectPayloadsVersion)",
+                    title: "Apple XProtect",
+                    value: "\(report.security.xprotectVersion)",
                     ok: true,
-                    detail: "Updated \(report.security.xprotectLastUpdated) • Built-in malware defense"
+                    detail: "Malware defense • Updated \(report.security.xprotectLastUpdated)"
                 )
+                securityPillarCard(
+                    title: "Touch ID Biometrics",
+                    value: touchID.isHardwareAvailable ? (touchID.isEnrolled ? (touchID.isTouchIDEnabled ? "Active" : "Disabled") : "Not Enrolled") : "Unavailable",
+                    ok: touchID.isHardwareAvailable && touchID.isEnrolled && touchID.isTouchIDEnabled,
+                    detail: touchID.isHardwareAvailable ? "Biometric authorization for privileged tasks" : "No fingerprint reader detected on this Mac"
+                )
+            }
+
+            // Touch ID & Privileged Authorization Settings Card
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Touch ID & Privileged Authorization", systemImage: "touchid")
+                            .font(.headline)
+                            .foregroundStyle(.teal)
+                        Spacer()
+                        if touchID.isHardwareAvailable {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(touchID.isEnrolled && touchID.isTouchIDEnabled ? Color.green : Color.orange)
+                                    .frame(width: 8, height: 8)
+                                Text(touchID.statusDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("No Touch ID hardware on this Mac")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
+
+                    if touchID.isHardwareAvailable {
+                        HStack(alignment: .center) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Use Touch ID for Privileged Tasks")
+                                    .font(.subheadline.bold())
+                                Text("Prompt for your fingerprint before modifying system LaunchDaemons, uninstalling privileged helpers, or purging protected APFS snapshots.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $touchID.isTouchIDEnabled)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                        }
+
+                        Divider()
+
+                        HStack(alignment: .center) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text("Terminal & Sudo Touch ID Integration:")
+                                        .font(.subheadline.bold())
+                                    Text(touchID.sudoStatus.rawValue)
+                                        .font(.caption.bold())
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(touchID.sudoStatus == .enabled ? Color.green.opacity(0.15) : Color.secondary.opacity(0.15))
+                                        .foregroundStyle(touchID.sudoStatus == .enabled ? .green : .secondary)
+                                        .clipShape(Capsule())
+                                }
+                                Text("macOS Sonoma, Sequoia, and macOS 27 support Touch ID for sudo commands via /etc/pam.d/sudo_local.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if touchID.sudoStatus == .enabled {
+                                Button("Revert Sudo to Password") {
+                                    Task {
+                                        let result = await touchID.disableSudoTouchID()
+                                        scanner.statusBannerMessage = result.message
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            } else {
+                                Button {
+                                    Task {
+                                        let result = await touchID.enableSudoTouchID()
+                                        scanner.statusBannerMessage = result.message
+                                    }
+                                } label: {
+                                    Label("Enable Touch ID for Sudo", systemImage: "touchid")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.teal)
+                                .controlSize(.small)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            Image(systemName: "info.circle")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Touch ID is not available on this Mac hardware.")
+                                    .font(.subheadline.bold())
+                                Text("MacCare safely defaults to the standard macOS administrator password prompt for privileged operations.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(8)
             }
 
             // Login Items Group
@@ -1551,7 +1680,11 @@ struct ContentView: View {
             Button(role: .destructive) {
                 startupItemPendingRemoval = item
             } label: {
-                Text(item.kind == .loginItem ? "Remove Login Item" : "Unload & Trash")
+                let isPrivileged = item.kind == .systemAgent || item.kind == .systemDaemon
+                let labelText = item.kind == .loginItem
+                    ? "Remove Login Item"
+                    : (isPrivileged && touchID.isHardwareAvailable && touchID.isTouchIDEnabled ? "Unload & Trash (Touch ID)" : "Unload & Trash")
+                Text(labelText)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

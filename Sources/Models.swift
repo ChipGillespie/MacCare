@@ -68,6 +68,9 @@ struct SecurityAudit: Codable {
     var xprotectPayloadsVersion: String = "Checking..."
     var xprotectLastUpdated: String = "Unknown"
     var startupItems: [StartupItem] = []
+    var touchIDAvailable: Bool = false
+    var touchIDEnrolled: Bool = false
+    var sudoTouchIDConfigured: Bool = false
 
     var allSecure: Bool {
         sipEnabled && gatekeeperEnabled && !startupItems.contains(where: { !$0.isKnownTrusted })
@@ -79,6 +82,7 @@ struct SystemMetrics: Codable {
     var osVersion: String = ""
     var uptime: String = ""
     var loadAverage: String = ""
+    var touchIDAvailable: Bool = false
 
     var diskTotalBytes: Int64 = 0
     var diskFreeBytes: Int64 = 0

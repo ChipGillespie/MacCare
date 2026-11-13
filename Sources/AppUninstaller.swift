@@ -257,11 +257,13 @@ final class AppUninstaller: ObservableObject {
                 }
 
                 let combinedCmd = shellCommands.joined(separator: " ; ")
-                let appleScriptCmd = combinedCmd
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                let osa = "do shell script \"\(appleScriptCmd)\" with administrator privileges"
-                _ = SystemScanner.runShell("/usr/bin/osascript", args: ["-e", osa])
+                let result = await TouchIDManager.shared.runPrivilegedCommand(
+                    combinedCmd,
+                    reason: "Authenticate with Touch ID to unload background daemons and remove privileged files for \(app.name)"
+                )
+                if result.canceled {
+                    return "Canceled uninstallation for \(app.name)."
+                }
 
                 // Count only moves that actually happened: source gone and destination present in Trash
                 for move in plannedMoves {

@@ -9,6 +9,7 @@ cp "$PROJECT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 swiftc -O -target arm64-apple-macosx14.0 \
   "$PROJECT_DIR/Sources/Models.swift" \
+  "$PROJECT_DIR/Sources/TouchIDManager.swift" \
   "$PROJECT_DIR/Sources/SystemScanner.swift" \
   "$PROJECT_DIR/Sources/SpaceLensScanner.swift" \
   "$PROJECT_DIR/Sources/AppUninstaller.swift" \

@@ -173,12 +173,11 @@ final class SystemScanner: ObservableObject {
                         let remainingOlder = olderDates.filter { currentDates.contains($0) }
                         if !remainingOlder.isEmpty {
                             let cmds = remainingOlder.map { "/usr/bin/tmutil deletelocalsnapshots \"\($0)\"" }.joined(separator: " ; ")
-                            let escaped = cmds
-                                .replacingOccurrences(of: "\\", with: "\\\\")
-                                .replacingOccurrences(of: "\"", with: "\\\"")
-                            let osa = "do shell script \"\(escaped)\" with administrator privileges"
-                            let out = Self.runShell("/usr/bin/osascript", args: ["-e", osa])
-                            if out.lowercased().contains("user canceled") {
+                            let result = await TouchIDManager.shared.runPrivilegedCommand(
+                                cmds,
+                                reason: "Authenticate with Touch ID to delete older APFS snapshots"
+                            )
+                            if !result.success {
                                 return false
                             }
                         }
@@ -190,12 +189,11 @@ final class SystemScanner: ObservableObject {
                         let datesRemaining = Self.localSnapshotDates()
                         if !datesRemaining.isEmpty {
                             let cmd = "/usr/bin/tmutil thinlocalsnapshots / 100000000000 4 ; for d in $(/usr/bin/tmutil listlocalsnapshotdates / | /usr/bin/grep -E '^[0-9]{4}-'); do /usr/bin/tmutil deletelocalsnapshots \"$d\"; done"
-                            let escaped = cmd
-                                .replacingOccurrences(of: "\\", with: "\\\\")
-                                .replacingOccurrences(of: "\"", with: "\\\"")
-                            let osa = "do shell script \"\(escaped)\" with administrator privileges"
-                            let out = Self.runShell("/usr/bin/osascript", args: ["-e", osa])
-                            if out.lowercased().contains("user canceled") {
+                            let result = await TouchIDManager.shared.runPrivilegedCommand(
+                                cmd,
+                                reason: "Authenticate with Touch ID to delete all APFS snapshots"
+                            )
+                            if !result.success {
                                 return false
                             }
                         }
@@ -290,13 +288,15 @@ final class SystemScanner: ObservableObject {
                 let escapedPath = item.path.replacingOccurrences(of: "'", with: "'\\''")
                 let trashDest = "\(home)/.Trash/\(item.name)-\(Int(Date().timeIntervalSince1970))".replacingOccurrences(of: "'", with: "'\\''")
                 let cmd = "/bin/launchctl bootout system '\(escapedPath)' 2>/dev/null || /bin/launchctl unload '\(escapedPath)' 2>/dev/null || true ; /bin/mv -f '\(escapedPath)' '\(trashDest)' && /usr/sbin/chown \(uid):staff '\(trashDest)'"
-                let appleScriptCmd = cmd
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                let osa = "do shell script \"\(appleScriptCmd)\" with administrator privileges"
-                let out = Self.runShell("/usr/bin/osascript", args: ["-e", osa])
-                if out.lowercased().contains("user canceled") {
-                    return "Canceled removing '\(item.name)'."
+                let result = await TouchIDManager.shared.runPrivilegedCommand(
+                    cmd,
+                    reason: "Authenticate with Touch ID to unload and move '\(item.name)' to Trash"
+                )
+                if !result.success {
+                    if result.canceled {
+                        return "Canceled removing '\(item.name)'."
+                    }
+                    return "Could not remove '\(item.name)': \(result.output)"
                 }
                 return "Unloaded and moved System Startup Item '\(item.name)' to your Trash."
             }
@@ -399,6 +399,7 @@ final class SystemScanner: ObservableObject {
         var m = SystemMetrics()
 
         m.macModel = detectHardwareModel()
+        m.touchIDAvailable = TouchIDManager.checkHardwareAvailable()
 
         let swVers = runShell("/usr/bin/sw_vers", args: ["-productVersion"]).trimmingCharacters(in: .whitespacesAndNewlines)
         let buildVers = runShell("/usr/bin/sw_vers", args: ["-buildVersion"]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -898,6 +899,10 @@ final class SystemScanner: ObservableObject {
 
         let spctlOut = runShell("/usr/sbin/spctl", args: ["--status"])
         audit.gatekeeperEnabled = spctlOut.lowercased().contains("enabled")
+
+        audit.touchIDAvailable = TouchIDManager.checkHardwareAvailable()
+        audit.touchIDEnrolled = TouchIDManager.checkBiometricsEnrolled()
+        audit.sudoTouchIDConfigured = TouchIDManager.getSudoTouchIDStatus() == .enabled
 
         if let xpDict = NSDictionary(contentsOfFile: "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist"),
            let ver = xpDict["CFBundleShortVersionString"] as? String {
